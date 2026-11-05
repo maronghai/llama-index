@@ -1,0 +1,39 @@
+# 09.03 会话记忆、压缩与隔离 / Conversation memory, compression, and isolation
+
+[返回全书目录 / Contents](../00-contents.md)
+
+对话记忆解决多轮指代和任务连续性，不是可靠事实库。完整历史会增加 token 与隐私暴露；滑动窗口可能忘记关键约束；摘要压缩会引入失真。将稳定用户偏好、任务状态和近期消息分开管理，比把一切拼接到提示更可控。
+
+Memory supports reference resolution and continuity, not authoritative facts. Full history increases tokens and privacy exposure; windows can drop constraints; summaries can distort them. Separate preferences, task state, and recent messages instead of concatenating everything.
+
+会话标识需要同时绑定用户、租户与授权范围。仅以浏览器传来的 session_id 读取历史可能导致越权。历史与向量记忆都需要保留期限、删除机制和敏感信息策略。模型生成的“用户偏好”也要区分确认事实与推断。
+
+Bind sessions to users, tenants, and authorization scope. Trusting a client-supplied session ID can expose another conversation. Apply retention, deletion, and sensitive-data policies to both message and vector memory. Distinguish confirmed preferences from model inference.
+
+权限变化后，历史中已出现的受限材料可能继续被模型引用。重新校验上下文或重建会话范围，必要时使旧会话失效。工具执行状态应放在可靠状态存储，不要依赖对话摘要记住某次写入是否已经完成。
+
+Permission changes can leave restricted material in history. Revalidate context, rebuild scope, or expire sessions when necessary. Store tool execution status reliably rather than relying on a summary to remember whether a write completed.
+
+## 重点与难点 / Key points and difficulties
+
+重点：记忆分层并绑定身份。难点：压缩保真、撤权后历史清理和跨会话隔离。
+
+Key: layered memory bound to identity. Difficulty: faithful compression, revocation, and isolation.
+
+## 面试考点与参考回答 / Interview question and answer
+
+问：记忆越长越好吗？答：不是，冗余与过时信息会增加成本和干扰；保留与当前任务相关且经过授权的内容。
+
+Q: Is more memory always better? A: no; stale and redundant information adds cost and distraction. Keep relevant, authorized context.
+
+## 项目中的坑与处置 / Production pitfalls and mitigation
+
+坑：所有用户共用一个 ChatEngine 实例和历史。处置：按会话隔离状态，测试并发请求与随机 session_id 的负例。
+
+Pitfall: sharing chat history across users. Isolate session state and test concurrent and forged-session cases.
+
+## 动手实验与验收 / Exercise and acceptance criteria
+
+运行两位用户的交错会话，再撤销其中一位权限。验收：无串话，撤权材料不进入后续上下文。
+
+Interleave conversations from two users and revoke one scope. Acceptance: no cross-talk or revoked evidence in later context.

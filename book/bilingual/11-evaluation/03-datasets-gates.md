@@ -1,0 +1,39 @@
+# 11.03 合成数据、数据泄漏与回归门禁 / Synthetic data, leakage, and regression gates
+
+[返回全书目录 / Contents](../00-contents.md)
+
+合成问题有助于扩大覆盖，但常贴近原文措辞，低估真实用户的省略、歧义和错误前提。将合成数据、真实脱敏问题、人工对抗问题分开标记。测试集应包含无答案、版本冲突、多语言、权限负例、表格计算和长文边界。
+
+Synthetic questions broaden coverage but often mirror source wording and underestimate ambiguity or false premises. Track synthetic, anonymized real, and adversarial questions separately. Include missing answers, conflicts, languages, access denials, table calculations, and long-context boundaries.
+
+按来源、时间或业务实体切分开发集与测试集，避免同一政策的近重复问题跨集合泄漏。参数在开发集选择，最终测试集只用于确认。持续从真实失败中建立回归集，但不要只收集已知错误而忘记正常样本和流量分布。
+
+Split by source, time, or entity to avoid near-duplicate leakage. Tune on development data and reserve the test set for confirmation. Turn real failures into regression cases while retaining ordinary traffic coverage.
+
+发布门禁应包括质量、权限、性能、成本和恢复，而不是只有一个总分。为高风险类别设置不能退化的底线。比较两版时采用同一问题的配对结果，检查改善与退化样例；样本很小时不要把微小百分比变化解释为稳定收益。
+
+Release gates should cover quality, authorization, performance, cost, and recovery. Set non-regression rules for high-risk slices. Compare paired outcomes and inspect wins and regressions. Small samples do not support strong claims from tiny percentage changes.
+
+## 重点与难点 / Key points and difficulties
+
+重点：测试集必须包含失败与负例。难点：泄漏、分布变化和小样本不确定性。
+
+Key: include negative and failure cases. Difficulty: leakage, distribution shifts, and small-sample uncertainty.
+
+## 面试考点与参考回答 / Interview question and answer
+
+问：如何证明一个优化有效？答：固定基线与数据，记录单因素改动，进行配对评测，报告分组结果、成本和退化案例。
+
+Q: How do you establish an improvement? A: freeze baseline and data, change one main factor, compare paired results, and report slices, cost, and regressions.
+
+## 项目中的坑与处置 / Production pitfalls and mitigation
+
+坑：反复看测试集调参数，最后成绩虚高。处置：保留封存集，并把所有调参过程与发布版本绑定。
+
+Pitfall: repeated tuning against the test set inflates performance. Keep a sealed holdout and version tuning decisions.
+
+## 动手实验与验收 / Exercise and acceptance criteria
+
+设计一份 50 题评测计划和门禁表，数字标为拟定阈值而非实测成绩。验收：每项门禁有失败处置和负责人。
+
+Design a 50-question evaluation and gate table, labeling targets as proposed rather than measured. Acceptance: every gate has an owner and failure response.
