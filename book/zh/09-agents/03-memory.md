@@ -23,3 +23,42 @@
 ## 动手实验与验收
 
 运行两位用户的交错会话，再撤销其中一位权限。验收：无串话，撤权材料不进入后续上下文。
+
+## 代码实现补充：按租户与会话隔离的有界记忆
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from collections import defaultdict
+
+class SessionMemory:
+    def __init__(self, max_chars=120):
+        self.data = defaultdict(list)
+        self.max_chars = max_chars
+
+    def append(self, tenant, user, session, role, text):
+        if role not in {"user", "assistant"}:
+            raise ValueError("untrusted role")
+        if len(text) > self.max_chars:
+            raise ValueError("message too long")
+        key = (tenant, user, session)
+        self.data[key].append({"role": role, "content": text})
+        while sum(len(x["content"]) for x in self.data[key]) > self.max_chars:
+            self.data[key].pop(0)
+
+    def read(self, tenant, user, session):
+        return [dict(x) for x in self.data.get((tenant, user, session), [])]
+
+memory = SessionMemory()
+memory.append("a", "u1", "s1", "user", "Hotel policy?")
+assert memory.read("b", "u1", "s1") == []
+assert memory.read("a", "u2", "s1") == []
+assert len(memory.read("a", "u1", "s1")) == 1
+print(memory.read("a", "u1", "s1"))
+```
+
+### 实现说明、验收与项目边界
+
+这是内存存储适配层示例，不是对当前 LlamaIndex Memory API 的封装。接入聊天引擎前把 read 的结果转换为 ChatMessage。字符预算仅供演示，生产应使用模型 tokenizer，按完整对话轮裁剪，加 TTL、加密、并发控制和删除接口；摘要也继承租户与删除要求。

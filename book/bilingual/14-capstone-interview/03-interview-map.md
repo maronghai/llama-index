@@ -41,3 +41,46 @@ Pitfall: memorizing APIs without tradeoffs. Prepare one failure, experiment, and
 用五分钟讲完整项目，再回答“预算减半”“必须离线”“权限实时撤销”三种追问。验收：方案随约束变化，且不虚构成绩。
 
 Present the project in five minutes, then handle half-budget, offline-only, and immediate-revocation constraints. Acceptance: adapt the design without inventing results.
+
+## 代码实现补充 / Implementation supplement: 用证据组织项目面试回答 / Structuring interview answers around evidence
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Experiment:
+    name: str
+    recall_before: float
+    recall_after: float
+    p95_before_ms: int
+    p95_after_ms: int
+    samples: int
+
+    def report(self):
+        if self.samples < 1:
+            raise ValueError("sample count is required")
+        return {
+            "change": self.name,
+            "recall_delta_pp": round(100 * (self.recall_after - self.recall_before), 2),
+            "latency_delta_ms": self.p95_after_ms - self.p95_before_ms,
+            "samples": self.samples,
+        }
+
+experiment = Experiment("hybrid retrieval", 0.72, 0.84, 600, 750, 200)
+report = experiment.report()
+assert report["recall_delta_pp"] == 12.0 and report["latency_delta_ms"] == 150
+print(report)
+print("Explain: symptom -> hypothesis -> controlled change -> evidence -> tradeoff -> rollback")
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+示例中的数字是假设数据，不可作为个人项目成绩。面试时说明标签来源、样本量、失败切片、延迟代价和对照条件；12 个百分点不等于相对增长 12%。项目练习：用自己评测产物替换输入，并解释置信区间与下一步实验。
+
+Numbers are hypothetical and must not be presented as personal project results. Explain labeling, sample size, failure slices, latency cost and controlled conditions. A 12-percentage-point change is not 12% relative growth. Replace inputs with your own evaluation artifacts and discuss uncertainty and the next experiment.

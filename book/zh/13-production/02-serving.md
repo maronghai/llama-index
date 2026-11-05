@@ -37,3 +37,43 @@ return validate_citations_and_serialize(answer, release.version)
 ## 动手实验与验收
 
 设计一次新嵌入模型灰度发布。验收：旧版本可回滚，权限负例通过，观察窗口内有质量与成本指标。
+
+## 代码实现补充：可回滚的版本发布门禁
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Artifact:
+    version: str
+    embedding: str
+    dimension: int
+    acl_schema: str
+
+active = Artifact("v1", "embed-A", 384, "acl-2")
+previous = None
+
+def publish(candidate, metrics):
+    global active, previous
+    if candidate.dimension <= 0 or not candidate.version:
+        raise ValueError("invalid artifact")
+    if metrics["unauthorized_hits"] != 0 or metrics["recall"] < 0.9:
+        raise ValueError("evaluation gate failed")
+    previous, active = active, candidate
+
+candidate = Artifact("v2", "embed-A", 384, "acl-2")
+publish(candidate, {"unauthorized_hits": 0, "recall": 0.93})
+assert active.version == "v2" and previous.version == "v1"
+# Atomic pointer swap is simulated by assignment in this single-process example.
+active, previous = previous, active
+assert active.version == "v1"
+print(active)
+```
+
+### 实现说明、验收与项目边界
+
+每个 Artifact 在独立存储中构建完整索引，运行时将嵌入模型、维度、权限 schema 与索引作为一个整体加载。此例只模拟单进程指针交换，不实现 HTTP 服务或分布式原子发布。生产使用带比较交换的配置存储、就绪探针、预热、灰度和旧版本保留。

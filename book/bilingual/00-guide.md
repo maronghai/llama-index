@@ -40,3 +40,16 @@ Study method: explain a failure, run an experiment, and repeat on your data. Cho
 - [Workflow API](https://developers.llamaindex.ai/python/workflows-api-reference/workflow/)
 - [Workflows Introduction](https://developers.llamaindex.ai/python/llamaagents/workflows/)
 - [Events API](https://developers.llamaindex.ai/python/workflows-api-reference/events/)
+
+## 本次代码补充与验证范围
+
+本次为原先没有 Python 实现的 25 节各补充一个完整代码块，三版同步，现每版 42 节均有 Python 代码。新增 25 个示例在 Python 3.12.14 下执行成功，其中核心框架示例使用 llama-index-core 0.14.25。三版共 126 个 Python 代码块通过语法解析并核对代码一致性；原有 17 个示例本次未重新执行，真实模型、数据库、Phoenix 等外部集成未完成端到端验证。
+
+核心框架可能在第一次调用 tokenizer 时下载编码缓存。离线部署需预先准备缓存，并通过 TIKTOKEN_CACHE_DIR 指定缓存位置；无需 API Key 不等于首次运行完全不联网。本次首次执行部分索引示例超时，缓存就绪后运行成功。Mock 示例只验证链路，标准库生产算法示例只展示设计边界，不代表完整生产服务。
+
+
+## Code supplement and validation scope
+
+One complete code block was added to each of the 25 sections that lacked Python implementations, synchronized across all editions. All 42 sections per edition now contain Python. The 25 new examples executed successfully with Python 3.12.14; core examples used llama-index-core 0.14.25. All 126 Python blocks across the three editions parsed successfully and matching sections contained identical code. The 17 original examples were not re-executed in this update. Real models, databases and Phoenix integrations were not end-to-end tested.
+
+Core tokenization may download an encoding cache on first use. Provision that cache and set TIKTOKEN_CACHE_DIR for offline deployment. No API key does not mean a network-free first run. Several initial index runs timed out and succeeded once the cache was available. Mock examples establish connectivity only; standard-library production examples illustrate boundaries rather than complete production services.

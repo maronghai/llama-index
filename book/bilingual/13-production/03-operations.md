@@ -37,3 +37,43 @@ Pitfall: removing filters to restore availability. Never degrade authorization; 
 演练向量库不可用、连接器停更和错误索引发布。验收：每次都有检测、止损、恢复和验证记录。
 
 Drill store outage, stale synchronization, and a bad index release. Acceptance: detection, containment, recovery, and verification records.
+
+## 代码实现补充 / Implementation supplement: 删除传播与对账演练 / Deletion propagation and reconciliation drills
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+state = {
+    "vectors": {"doc-1": ["n1", "n2"], "doc-2": ["n3"]},
+    "keywords": {"doc-1": ["n1", "n2"], "doc-2": ["n3"]},
+    "summaries": {"doc-1": "summary-1"},
+    "cache": {"doc-1": "cached-answer"},
+}
+tombstones = set()
+
+def delete_source(source_id):
+    # Readers must reject tombstoned sources immediately.
+    tombstones.add(source_id)
+    for store in state.values():
+        store.pop(source_id, None)
+
+def remaining(source_id):
+    return [name for name, store in state.items() if source_id in store]
+
+delete_source("doc-1")
+assert remaining("doc-1") == []
+assert "doc-2" in state["vectors"]
+delete_source("doc-1")
+assert "doc-1" in tombstones
+print({"residual_stores": remaining("doc-1"), "idempotent": True})
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+tombstone 先阻断读取，再异步清理派生物，最后对账。字典只模拟各存储；生产需要 source→node→summary→cache 的反向依赖、删除任务状态、重试、死信与证据日志。备份和会话记忆也在删除范围内，恢复旧快照后必须重放墓碑；不能把此演练当成真实系统已删除证明。
+
+Block reads with a tombstone, clean derived artifacts, then reconcile. Dictionaries simulate stores. Production needs reverse dependencies, durable job state, retries, dead letters and audit evidence. Include backups and session memory and replay tombstones after restoration. This drill is not proof of deletion in a deployed system.

@@ -37,3 +37,43 @@ Pitfall: every replica rebuilds a large index on startup. Build separately and s
 ## Exercise and acceptance criteria
 
 Plan a canary embedding migration. Acceptance: rollback, access-denial checks, and quality/cost metrics during observation.
+
+## Implementation supplement: A rollback-capable release gate
+
+Dependencies: Python 3.10+; Python standard library only.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Artifact:
+    version: str
+    embedding: str
+    dimension: int
+    acl_schema: str
+
+active = Artifact("v1", "embed-A", 384, "acl-2")
+previous = None
+
+def publish(candidate, metrics):
+    global active, previous
+    if candidate.dimension <= 0 or not candidate.version:
+        raise ValueError("invalid artifact")
+    if metrics["unauthorized_hits"] != 0 or metrics["recall"] < 0.9:
+        raise ValueError("evaluation gate failed")
+    previous, active = active, candidate
+
+candidate = Artifact("v2", "embed-A", 384, "acl-2")
+publish(candidate, {"unauthorized_hits": 0, "recall": 0.93})
+assert active.version == "v2" and previous.version == "v1"
+# Atomic pointer swap is simulated by assignment in this single-process example.
+active, previous = previous, active
+assert active.version == "v1"
+print(active)
+```
+
+### Implementation, acceptance and production boundaries
+
+Build each artifact in isolated storage and load its embedding, dimension, ACL schema and index as one unit. Assignment here only simulates a single-process pointer swap, not HTTP serving or distributed atomic release. Use compare-and-swap configuration, readiness probes, warmup, canaries and retained prior artifacts.

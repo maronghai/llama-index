@@ -23,3 +23,44 @@ Pitfall: merging names creates false cross-company relationships. Use namespaces
 ## Exercise and acceptance criteria
 
 Build a small graph with duplicate company names and a two-hop question. Acceptance: separate entities and evidence for every answer path.
+
+## Implementation supplement: An evidence-bearing property graph and bounded traversal
+
+Dependencies: Python 3.10+; Python standard library only.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+from collections import deque
+
+edges = [
+    {"src": "org:acme", "rel": "OWNS", "dst": "product:x", "tenant": "a", "evidence": "doc-1"},
+    {"src": "product:x", "rel": "USES", "dst": "tech:y", "tenant": "a", "evidence": "doc-2"},
+    {"src": "product:x", "rel": "USES", "dst": "secret:z", "tenant": "b", "evidence": "doc-3"},
+]
+
+def traverse(start, tenant, max_hops=2):
+    queue = deque([(start, 0)])
+    visited = {start}
+    result = []
+    while queue:
+        node, depth = queue.popleft()
+        if depth >= max_hops:
+            continue
+        for edge in edges:
+            if edge["src"] == node and edge["tenant"] == tenant:
+                result.append(edge)
+                if edge["dst"] not in visited:
+                    visited.add(edge["dst"])
+                    queue.append((edge["dst"], depth + 1))
+    return result
+
+result = traverse("org:acme", "a")
+assert len(result) == 2 and all(e["evidence"] for e in result)
+assert all(e["dst"] != "secret:z" for e in result)
+print(result)
+```
+
+### Implementation, acceptance and production boundaries
+
+This reference traversal is not a PropertyGraphIndex integration test. Entities use namespaced stable IDs and edges carry evidence and tenant ownership. Validate extracted triples, entity resolution and relation types before writing graph storage. Production traversal also needs edge, time and high-degree limits.

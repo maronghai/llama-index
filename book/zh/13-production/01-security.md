@@ -23,3 +23,42 @@
 ## 动手实验与验收
 
 构造恶意文档请求调用写工具和泄露密钥。验收：模型即使产生调用意图，工具与数据边界仍阻止越权。
+
+## 代码实现补充：检索前后双重授权与最小上下文
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Principal:
+    tenant: str
+    groups: frozenset[str]
+
+records = [
+    {"id": "1", "tenant": "a", "groups": {"staff"}, "text": "Hotel limit 500"},
+    {"id": "2", "tenant": "a", "groups": {"finance"}, "text": "Private payroll"},
+    {"id": "3", "tenant": "b", "groups": {"staff"}, "text": "Tenant B secret"},
+]
+def allowed(user, row):
+    return row["tenant"] == user.tenant and bool(row["groups"] & user.groups)
+
+def retrieve(user, query):
+    # A real vector backend must enforce this predicate before top-k selection.
+    candidates = [r for r in records if allowed(user, r)]
+    ranked = sorted(candidates, key=lambda r: len(set(query.lower().split()) & set(r["text"].lower().split())), reverse=True)
+    return [{"id": r["id"], "text": r["text"]} for r in ranked[:3] if allowed(user, r)]
+
+user = Principal("a", frozenset({"staff"}))
+evidence = retrieve(user, "hotel limit")
+assert [r["id"] for r in evidence] == ["1"]
+assert retrieve(Principal("c", frozenset({"staff"})), "hotel") == []
+print(evidence)
+```
+
+### 实现说明、验收与项目边界
+
+Principal 必须来自已认证会话，权限过滤在候选排名前执行，返回前再核验；父块与缓存同样适用。此代码不检测提示注入。抵御文档中恶意指令还需要工具权限收敛、把证据视为数据、输出结构校验，以及写操作的人审与幂等边界。

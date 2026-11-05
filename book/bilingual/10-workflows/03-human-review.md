@@ -37,3 +37,56 @@ Pitfall: regenerating arguments after approval. Execute the immutable approved a
 模拟批准、拒绝、超时和重复回调。验收：同一动作最多执行一次，参数变化必须重新审核。
 
 Test approval, rejection, expiry, and duplicate callbacks. Acceptance: at most one execution and renewed review after parameter changes.
+
+## 代码实现补充 / Implementation supplement: 审批绑定内容与单次执行 / Content-bound review and one-time execution
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+import hashlib
+import json
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Proposal:
+    request_id: str
+    tenant: str
+    action: str
+    amount: int
+
+def fingerprint(proposal):
+    return hashlib.sha256(json.dumps(vars(proposal), sort_keys=True).encode()).hexdigest()
+
+executed = set()
+def execute(proposal, approval, reviewer_tenant):
+    if reviewer_tenant != proposal.tenant:
+        raise PermissionError("wrong reviewer tenant")
+    if approval != fingerprint(proposal):
+        raise PermissionError("proposal changed or not approved")
+    if proposal.request_id in executed:
+        return "already executed"
+    # In production, atomically claim the ID and use a downstream idempotency key.
+    executed.add(proposal.request_id)
+    return "executed"
+
+p = Proposal("r-1", "a", "refund", 100)
+approval = fingerprint(p)
+assert execute(p, approval, "a") == "executed"
+assert execute(p, approval, "a") == "already executed"
+try:
+    execute(Proposal("r-2", "a", "refund", 999), approval, "a")
+except PermissionError:
+    print("changed proposal denied")
+else:
+    raise AssertionError("approval not bound to content")
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+哈希不是审批凭证；此处假定 approval 来自已认证的人工审批服务。实际必须持久化审批人、权限、时间、过期时间与内容哈希，模型不能自行创建批准事件。内存 set 不提供跨进程或崩溃恢复的 exactly-once 保证，需数据库唯一键和下游幂等协议。
+
+A hash is not an approval credential. Here approval is assumed to come from an authenticated human review service. Persist reviewer identity, authorization, time, expiration and content hash; models cannot approve themselves. The in-memory set does not provide cross-process or crash-safe exactly-once execution.

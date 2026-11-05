@@ -23,3 +23,31 @@
 ## 动手实验与验收
 
 对含低频重大风险的长文生成摘要。验收：重大风险不遗漏，每个结论可回溯到原段落。
+
+## 代码实现补充：SummaryIndex 的全量证据基线
+
+依赖：Python 3.10+；安装 `llama-index-core==0.14.25`。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from llama_index.core import Document, SummaryIndex
+from llama_index.core.llms import MockLLM
+
+index = SummaryIndex.from_documents([
+    Document(text="Q1: launched a search prototype.", id_="q1"),
+    Document(text="Q2: added access control and regression evaluation.", id_="q2"),
+])
+hits = index.as_retriever().retrieve("Summarize progress across quarters")
+assert {h.node.ref_doc_id for h in hits} == {"q1", "q2"}
+engine = index.as_query_engine(response_mode="tree_summarize", llm=MockLLM(max_tokens=16))
+response = engine.query("Summarize progress across quarters")
+assert len(response.source_nodes) == 2
+print({"retrieved": len(hits), "sources": len(response.source_nodes)})
+```
+
+### 实现说明、验收与项目边界
+
+SummaryIndex 的默认检索返回所有节点，本例验证覆盖范围，不验证摘要准确性。tree_summarize 可以组织分层合成，但不会自动解决漏项与权限传播。文档增多时统计节点总数、模型调用数和输入 token，与向量检索基线比较成本。
+
+首次运行提示：核心包 tokenizer 可能下载编码缓存；离线环境请预置缓存并设置 `TIKTOKEN_CACHE_DIR`。无需模型密钥不代表首次运行不联网。

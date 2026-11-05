@@ -23,3 +23,39 @@ Pitfall: removing filters to restore availability. Never degrade authorization; 
 ## Exercise and acceptance criteria
 
 Drill store outage, stale synchronization, and a bad index release. Acceptance: detection, containment, recovery, and verification records.
+
+## Implementation supplement: Deletion propagation and reconciliation drills
+
+Dependencies: Python 3.10+; Python standard library only.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+state = {
+    "vectors": {"doc-1": ["n1", "n2"], "doc-2": ["n3"]},
+    "keywords": {"doc-1": ["n1", "n2"], "doc-2": ["n3"]},
+    "summaries": {"doc-1": "summary-1"},
+    "cache": {"doc-1": "cached-answer"},
+}
+tombstones = set()
+
+def delete_source(source_id):
+    # Readers must reject tombstoned sources immediately.
+    tombstones.add(source_id)
+    for store in state.values():
+        store.pop(source_id, None)
+
+def remaining(source_id):
+    return [name for name, store in state.items() if source_id in store]
+
+delete_source("doc-1")
+assert remaining("doc-1") == []
+assert "doc-2" in state["vectors"]
+delete_source("doc-1")
+assert "doc-1" in tombstones
+print({"residual_stores": remaining("doc-1"), "idempotent": True})
+```
+
+### Implementation, acceptance and production boundaries
+
+Block reads with a tombstone, clean derived artifacts, then reconcile. Dictionaries simulate stores. Production needs reverse dependencies, durable job state, retries, dead letters and audit evidence. Include backups and session memory and replay tombstones after restoration. This drill is not proof of deletion in a deployed system.

@@ -37,3 +37,46 @@ Pitfall: parent expansion reintroduces secrets after filtered retrieval. Reautho
 构造恶意文档请求调用写工具和泄露密钥。验收：模型即使产生调用意图，工具与数据边界仍阻止越权。
 
 Inject a document requesting unauthorized tools and secrets. Acceptance: execution controls block violations even if the model proposes them.
+
+## 代码实现补充 / Implementation supplement: 检索前后双重授权与最小上下文 / Authorization before and after retrieval
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Principal:
+    tenant: str
+    groups: frozenset[str]
+
+records = [
+    {"id": "1", "tenant": "a", "groups": {"staff"}, "text": "Hotel limit 500"},
+    {"id": "2", "tenant": "a", "groups": {"finance"}, "text": "Private payroll"},
+    {"id": "3", "tenant": "b", "groups": {"staff"}, "text": "Tenant B secret"},
+]
+def allowed(user, row):
+    return row["tenant"] == user.tenant and bool(row["groups"] & user.groups)
+
+def retrieve(user, query):
+    # A real vector backend must enforce this predicate before top-k selection.
+    candidates = [r for r in records if allowed(user, r)]
+    ranked = sorted(candidates, key=lambda r: len(set(query.lower().split()) & set(r["text"].lower().split())), reverse=True)
+    return [{"id": r["id"], "text": r["text"]} for r in ranked[:3] if allowed(user, r)]
+
+user = Principal("a", frozenset({"staff"}))
+evidence = retrieve(user, "hotel limit")
+assert [r["id"] for r in evidence] == ["1"]
+assert retrieve(Principal("c", frozenset({"staff"})), "hotel") == []
+print(evidence)
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+Principal 必须来自已认证会话，权限过滤在候选排名前执行，返回前再核验；父块与缓存同样适用。此代码不检测提示注入。抵御文档中恶意指令还需要工具权限收敛、把证据视为数据、输出结构校验，以及写操作的人审与幂等边界。
+
+Principal must come from an authenticated session. Filter before ranking and recheck before returning; apply the same rules to expanded parents and caches. This code does not detect prompt injection. Also constrain tools, treat retrieved text as data, validate outputs, and protect writes with review and idempotency.

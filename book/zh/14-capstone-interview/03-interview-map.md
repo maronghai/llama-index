@@ -25,3 +25,42 @@
 ## 动手实验与验收
 
 用五分钟讲完整项目，再回答“预算减半”“必须离线”“权限实时撤销”三种追问。验收：方案随约束变化，且不虚构成绩。
+
+## 代码实现补充：用证据组织项目面试回答
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Experiment:
+    name: str
+    recall_before: float
+    recall_after: float
+    p95_before_ms: int
+    p95_after_ms: int
+    samples: int
+
+    def report(self):
+        if self.samples < 1:
+            raise ValueError("sample count is required")
+        return {
+            "change": self.name,
+            "recall_delta_pp": round(100 * (self.recall_after - self.recall_before), 2),
+            "latency_delta_ms": self.p95_after_ms - self.p95_before_ms,
+            "samples": self.samples,
+        }
+
+experiment = Experiment("hybrid retrieval", 0.72, 0.84, 600, 750, 200)
+report = experiment.report()
+assert report["recall_delta_pp"] == 12.0 and report["latency_delta_ms"] == 150
+print(report)
+print("Explain: symptom -> hypothesis -> controlled change -> evidence -> tradeoff -> rollback")
+```
+
+### 实现说明、验收与项目边界
+
+示例中的数字是假设数据，不可作为个人项目成绩。面试时说明标签来源、样本量、失败切片、延迟代价和对照条件；12 个百分点不等于相对增长 12%。项目练习：用自己评测产物替换输入，并解释置信区间与下一步实验。

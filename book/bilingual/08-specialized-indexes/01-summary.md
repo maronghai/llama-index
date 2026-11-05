@@ -37,3 +37,35 @@ Pitfall: summaries expose deleted policy content. Track dependencies and invalid
 对含低频重大风险的长文生成摘要。验收：重大风险不遗漏，每个结论可回溯到原段落。
 
 Summarize a document with rare major risks. Acceptance: preserve those risks and trace every conclusion to a passage.
+
+## 代码实现补充 / Implementation supplement: SummaryIndex 的全量证据基线 / A full-evidence SummaryIndex baseline
+
+依赖 / Dependencies: Python 3.10+; `llama-index-core==0.14.25`。
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from llama_index.core import Document, SummaryIndex
+from llama_index.core.llms import MockLLM
+
+index = SummaryIndex.from_documents([
+    Document(text="Q1: launched a search prototype.", id_="q1"),
+    Document(text="Q2: added access control and regression evaluation.", id_="q2"),
+])
+hits = index.as_retriever().retrieve("Summarize progress across quarters")
+assert {h.node.ref_doc_id for h in hits} == {"q1", "q2"}
+engine = index.as_query_engine(response_mode="tree_summarize", llm=MockLLM(max_tokens=16))
+response = engine.query("Summarize progress across quarters")
+assert len(response.source_nodes) == 2
+print({"retrieved": len(hits), "sources": len(response.source_nodes)})
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+SummaryIndex 的默认检索返回所有节点，本例验证覆盖范围，不验证摘要准确性。tree_summarize 可以组织分层合成，但不会自动解决漏项与权限传播。文档增多时统计节点总数、模型调用数和输入 token，与向量检索基线比较成本。
+
+Default SummaryIndex retrieval returns all nodes. This checks coverage, not summary accuracy. tree_summarize organizes hierarchical synthesis but cannot guarantee completeness or permission propagation. As the corpus grows, compare node counts, calls and input tokens against vector retrieval.
+
+首次运行 / First run：tokenizer 可能下载编码缓存。离线运行需预置缓存并设置 `TIKTOKEN_CACHE_DIR`。Tokenization may download an encoding cache; provision it before offline use.

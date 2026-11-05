@@ -25,3 +25,45 @@
 ## 动手实验与验收
 
 完成一份项目验收矩阵与最小运行链路，用真实运行结果填表。验收：未运行项写未验证，不能用推测补齐。
+
+## 代码实现补充：带权限、引用与验收的最小知识库
+
+依赖：Python 3.10+；安装 `llama-index-core==0.14.25`。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from llama_index.core import VectorStoreIndex
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.schema import TextNode
+
+nodes = [
+    TextNode(id_="a-policy", text="Hotel allowance is CNY 500 per night.", metadata={"tenant": "a"}),
+    TextNode(id_="b-policy", text="Hotel allowance is CNY 900 per night.", metadata={"tenant": "b"}),
+]
+# Separate indexes make tenant isolation explicit for this tiny example.
+indexes = {tenant: VectorStoreIndex([n for n in nodes if n.metadata["tenant"] == tenant],
+                                  embed_model=MockEmbedding(embed_dim=8))
+           for tenant in {"a", "b"}}
+
+def ask(authenticated_tenant, question):
+    index = indexes.get(authenticated_tenant)
+    if index is None:
+        return {"answer": "Insufficient evidence", "citations": []}
+    hits = index.as_retriever(similarity_top_k=1).retrieve(question)
+    hits = [h for h in hits if h.node.metadata["tenant"] == authenticated_tenant]
+    if not hits:
+        return {"answer": "Insufficient evidence", "citations": []}
+    return {"answer": hits[0].node.text, "citations": [hits[0].node.node_id]}
+
+result = ask("a", "hotel allowance?")
+assert result["citations"] == ["a-policy"] and "900" not in result["answer"]
+assert ask("unknown", "hotel allowance?")["citations"] == []
+print(result)
+```
+
+### 实现说明、验收与项目边界
+
+先在单文件闭环实现 Document/Node 的来源与授权，再拆分摄取和在线服务。这个示例有意只返回原文，Mock 向量不提供语义拒答能力；租户内无关问题仍可能返回一条政策。进入生产前增加真实嵌入、相关性与无答案评测、来源版本、增量删除、持久化、trace 和发布门禁。
+
+首次运行提示：核心包 tokenizer 可能下载编码缓存；离线环境请预置缓存并设置 `TIKTOKEN_CACHE_DIR`。无需模型密钥不代表首次运行不联网。

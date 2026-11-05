@@ -25,3 +25,37 @@
 ## 动手实验与验收
 
 任选两类故障，写一页排障记录并给出反证条件。验收：每个假设都有可观测证据，失败假设被明确排除。
+
+## 代码实现补充：八类故障的可执行诊断器
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+def diagnose(s):
+    findings = []
+    rules = [
+        (s["recall"] < 0.7, "retrieval", "inspect corpus, chunks and embeddings"),
+        (s["missing_conditions"] > 0, "omitted exceptions", "inspect parsing and context truncation"),
+        (s["duplicate_sources"] > 0, "duplicate ingestion", "inspect stable IDs and deletion"),
+        (s["unauthorized_hits"] > 0, "authorization leak", "block affected reads and audit derived artifacts"),
+        (s["p95_ms"] > 2000, "latency", "inspect queueing, concurrency and provider limits"),
+        (s["calls_per_query"] > 8, "cost amplification", "inspect decomposition and agent budgets"),
+        (not s["import_ok"], "upgrade regression", "restore tested package set"),
+        (s["online_success"] < s["offline_success"] - 0.15, "distribution shift", "evaluate real anonymized query slices"),
+    ]
+    for condition, symptom, next_step in rules:
+        if condition:
+            findings.append({"symptom": symptom, "next_step": next_step})
+    return findings
+
+sample = dict(recall=0.5, missing_conditions=1, duplicate_sources=2, unauthorized_hits=1,
+              p95_ms=3000, calls_per_query=12, import_ok=False, online_success=0.6, offline_success=0.95)
+assert len(diagnose(sample)) == 8
+print(diagnose(sample))
+```
+
+### 实现说明、验收与项目边界
+
+这些阈值只是教学配置，输出是排查方向而不是根因结论。线上权限泄漏需先止损，再保留审计证据。接入 trace 和评测数据后按优先级告警，给每个假设补充反证与回归；不要因为命中规则便自动同时修改模型、切块和数据库。

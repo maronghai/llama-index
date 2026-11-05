@@ -23,3 +23,39 @@
 ## 动手实验与验收
 
 建立三类来源与 15 个路由问题，含跨源问题。验收：报告混淆矩阵和回退比例，解释每个误路由。
+
+## 代码实现补充：可检查的多源路由基线
+
+依赖：Python 3.10+；安装 `llama-index-core==0.14.25`。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from llama_index.core import Document, SummaryIndex
+from llama_index.core.llms import MockLLM
+
+llm = MockLLM(max_tokens=16)
+engines = {
+    "travel": SummaryIndex.from_documents([Document(text="Hotel limit is 500.")]).as_query_engine(llm=llm),
+    "leave": SummaryIndex.from_documents([Document(text="Annual leave is 12 days.")]).as_query_engine(llm=llm),
+}
+
+def route(question):
+    q = question.lower()
+    matches = [name for name, terms in {"travel": ("hotel", "travel"), "leave": ("leave", "vacation")}.items()
+               if any(term in q for term in terms)]
+    return matches[0] if len(matches) == 1 else None
+
+assert route("hotel limit?") == "travel"
+assert route("hotel and leave rules?") is None
+selected = route("hotel limit?")
+response = engines[selected].query("hotel limit?")
+assert response.source_nodes
+print({"route": selected, "sources": len(response.source_nodes)})
+```
+
+### 实现说明、验收与项目边界
+
+显式规则路由是 RouterQueryEngine 的可解释基线，不是该类的完整替代。混合问题和未知问题返回 None，交给澄清或多源流程；不要静默选第一项。替换为模型 selector 后，仍保留允许源列表、授权与误路由评测。Mock 响应只验证被选引擎被调用。
+
+首次运行提示：核心包 tokenizer 可能下载编码缓存；离线环境请预置缓存并设置 `TIKTOKEN_CACHE_DIR`。无需模型密钥不代表首次运行不联网。

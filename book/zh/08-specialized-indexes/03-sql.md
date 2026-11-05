@@ -23,3 +23,41 @@
 ## 动手实验与验收
 
 设计销售汇总查询，加入跨租户与无限扫描负例。验收：合法聚合正确，越权与超预算查询被拦截。
+
+## 代码实现补充：只读 SQL 执行与确定性聚合
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE expenses (tenant TEXT, amount INTEGER)")
+con.executemany("INSERT INTO expenses VALUES (?, ?)", [("a", 120), ("a", 80), ("b", 999)])
+con.commit()
+con.execute("PRAGMA query_only=ON")
+# The model selects a metric ID, never arbitrary executable SQL.
+queries = {"expense_total": "SELECT COALESCE(SUM(amount),0) FROM expenses WHERE tenant = ?"}
+
+def compute(metric, tenant):
+    if metric not in queries:
+        raise ValueError("unknown metric")
+    return con.execute(queries[metric], (tenant,)).fetchone()[0]
+
+assert compute("expense_total", "a") == 200
+assert compute("expense_total", "a' OR 1=1 --") == 0
+try:
+    con.execute("DELETE FROM expenses")
+except sqlite3.OperationalError:
+    print("write denied")
+else:
+    raise AssertionError("write protection failed")
+print(compute("expense_total", "a"))
+con.close()
+```
+
+### 实现说明、验收与项目边界
+
+模型只选择允许的指标 ID，服务端注入认证租户，再参数化执行。此方案比任意 Text-to-SQL 更受限，适合固定报表。若接入 NLSQLTableQueryEngine，应使用只读账号、库侧行权限、解析器与执行预算；字符串以 SELECT 开头不足以构成安全检查。

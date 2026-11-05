@@ -23,3 +23,39 @@
 ## 动手实验与验收
 
 演练向量库不可用、连接器停更和错误索引发布。验收：每次都有检测、止损、恢复和验证记录。
+
+## 代码实现补充：删除传播与对账演练
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+state = {
+    "vectors": {"doc-1": ["n1", "n2"], "doc-2": ["n3"]},
+    "keywords": {"doc-1": ["n1", "n2"], "doc-2": ["n3"]},
+    "summaries": {"doc-1": "summary-1"},
+    "cache": {"doc-1": "cached-answer"},
+}
+tombstones = set()
+
+def delete_source(source_id):
+    # Readers must reject tombstoned sources immediately.
+    tombstones.add(source_id)
+    for store in state.values():
+        store.pop(source_id, None)
+
+def remaining(source_id):
+    return [name for name, store in state.items() if source_id in store]
+
+delete_source("doc-1")
+assert remaining("doc-1") == []
+assert "doc-2" in state["vectors"]
+delete_source("doc-1")
+assert "doc-1" in tombstones
+print({"residual_stores": remaining("doc-1"), "idempotent": True})
+```
+
+### 实现说明、验收与项目边界
+
+tombstone 先阻断读取，再异步清理派生物，最后对账。字典只模拟各存储；生产需要 source→node→summary→cache 的反向依赖、删除任务状态、重试、死信与证据日志。备份和会话记忆也在删除范围内，恢复旧快照后必须重放墓碑；不能把此演练当成真实系统已删除证明。

@@ -37,3 +37,38 @@ Pitfall: the same model writes references and judges itself. Use independent lab
 制作“忠实但过时”“正确但无证据”“相关但遗漏条件”三个答案。验收：各维度给出不同评分理由。
 
 Create faithful-but-stale, correct-but-unsupported, and relevant-but-incomplete answers. Acceptance: distinguish their scores and rationales.
+
+## 代码实现补充 / Implementation supplement: 事实标签与引用支持的独立评估 / Separate fact correctness from citation support
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+def evaluate(predicted_claims, expected_claims, evidence_facts):
+    # Claims are manually normalized facts, not raw generated sentences.
+    correct = set(predicted_claims) & set(expected_claims)
+    supported = [claim for claim, refs in predicted_claims.items()
+                 if refs and all(claim in evidence_facts.get(ref, set()) for ref in refs)]
+    return {
+        "fact_precision": len(correct) / max(1, len(predicted_claims)),
+        "fact_recall": len(correct) / max(1, len(expected_claims)),
+        "citation_support": len(supported) / max(1, len(predicted_claims)),
+    }
+
+gold = {"hotel_limit=500", "receipts=required"}
+evidence = {"p1": {"hotel_limit=500"}, "p2": {"receipts=required"}}
+good = evaluate({"hotel_limit=500": ["p1"], "receipts=required": ["p2"]}, gold, evidence)
+bad = evaluate({"hotel_limit=800": ["p1"]}, gold, evidence)
+assert good == {"fact_precision": 1.0, "fact_recall": 1.0, "citation_support": 1.0}
+assert bad["citation_support"] == 0
+print({"good": good, "bad": bad})
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+先人工标注原子事实及其证据，再运行确定性评分，适合作为裁判模型的校准集。此处引用支持采用严格规则：列出的每条引用均需支持该事实；不是自然语言蕴含判断，也不是 LlamaIndex FaithfulnessEvaluator 的替代。真实问答需记录裁判提示、模型、人工抽检与拒答题口径。
+
+Manually annotate atomic facts and evidence for deterministic scoring and judge calibration. Citation support uses a strict rule: every listed reference must support the claim. This is neither natural-language entailment nor a replacement for FaithfulnessEvaluator. Record judge prompts, models, audits and abstention policy.

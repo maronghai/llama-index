@@ -23,3 +23,52 @@ Pitfall: regenerating arguments after approval. Execute the immutable approved a
 ## Exercise and acceptance criteria
 
 Test approval, rejection, expiry, and duplicate callbacks. Acceptance: at most one execution and renewed review after parameter changes.
+
+## Implementation supplement: Content-bound review and one-time execution
+
+Dependencies: Python 3.10+; Python standard library only.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+import hashlib
+import json
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Proposal:
+    request_id: str
+    tenant: str
+    action: str
+    amount: int
+
+def fingerprint(proposal):
+    return hashlib.sha256(json.dumps(vars(proposal), sort_keys=True).encode()).hexdigest()
+
+executed = set()
+def execute(proposal, approval, reviewer_tenant):
+    if reviewer_tenant != proposal.tenant:
+        raise PermissionError("wrong reviewer tenant")
+    if approval != fingerprint(proposal):
+        raise PermissionError("proposal changed or not approved")
+    if proposal.request_id in executed:
+        return "already executed"
+    # In production, atomically claim the ID and use a downstream idempotency key.
+    executed.add(proposal.request_id)
+    return "executed"
+
+p = Proposal("r-1", "a", "refund", 100)
+approval = fingerprint(p)
+assert execute(p, approval, "a") == "executed"
+assert execute(p, approval, "a") == "already executed"
+try:
+    execute(Proposal("r-2", "a", "refund", 999), approval, "a")
+except PermissionError:
+    print("changed proposal denied")
+else:
+    raise AssertionError("approval not bound to content")
+```
+
+### Implementation, acceptance and production boundaries
+
+A hash is not an approval credential. Here approval is assumed to come from an authenticated human review service. Persist reviewer identity, authorization, time, expiration and content hash; models cannot approve themselves. The in-memory set does not provide cross-process or crash-safe exactly-once execution.

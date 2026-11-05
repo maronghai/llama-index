@@ -25,3 +25,45 @@ Pitfall: presenting a technology list as a design. Explain the failure each comp
 ## Exercise and acceptance criteria
 
 Create an acceptance matrix and minimal executable path, then populate it with real results. Acceptance: mark unrun items as unverified.
+
+## Implementation supplement: A minimal knowledge base with authorization and citations
+
+Dependencies: Python 3.10+; install `llama-index-core==0.14.25`.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+from llama_index.core import VectorStoreIndex
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.schema import TextNode
+
+nodes = [
+    TextNode(id_="a-policy", text="Hotel allowance is CNY 500 per night.", metadata={"tenant": "a"}),
+    TextNode(id_="b-policy", text="Hotel allowance is CNY 900 per night.", metadata={"tenant": "b"}),
+]
+# Separate indexes make tenant isolation explicit for this tiny example.
+indexes = {tenant: VectorStoreIndex([n for n in nodes if n.metadata["tenant"] == tenant],
+                                  embed_model=MockEmbedding(embed_dim=8))
+           for tenant in {"a", "b"}}
+
+def ask(authenticated_tenant, question):
+    index = indexes.get(authenticated_tenant)
+    if index is None:
+        return {"answer": "Insufficient evidence", "citations": []}
+    hits = index.as_retriever(similarity_top_k=1).retrieve(question)
+    hits = [h for h in hits if h.node.metadata["tenant"] == authenticated_tenant]
+    if not hits:
+        return {"answer": "Insufficient evidence", "citations": []}
+    return {"answer": hits[0].node.text, "citations": [hits[0].node.node_id]}
+
+result = ask("a", "hotel allowance?")
+assert result["citations"] == ["a-policy"] and "900" not in result["answer"]
+assert ask("unknown", "hotel allowance?")["citations"] == []
+print(result)
+```
+
+### Implementation, acceptance and production boundaries
+
+Start with provenance and authorization in a single-file loop before separating ingestion and serving. This deliberately returns source text; mock vectors cannot support semantic abstention, so irrelevant in-tenant questions may still retrieve a policy. Add real embeddings, relevance and unanswerable evaluation, revisions, deletion, persistence, tracing and release gates.
+
+First-run note: core tokenization may download an encoding cache. Provision it and set `TIKTOKEN_CACHE_DIR` for offline use. No model key does not imply a network-free first run.

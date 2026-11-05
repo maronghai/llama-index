@@ -23,3 +23,44 @@
 ## 动手实验与验收
 
 建立含同名公司的小图，设计两跳问题。验收：不会错误合并实体，每条答案路径可定位原始证据。
+
+## 代码实现补充：有证据的属性图与受限遍历
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from collections import deque
+
+edges = [
+    {"src": "org:acme", "rel": "OWNS", "dst": "product:x", "tenant": "a", "evidence": "doc-1"},
+    {"src": "product:x", "rel": "USES", "dst": "tech:y", "tenant": "a", "evidence": "doc-2"},
+    {"src": "product:x", "rel": "USES", "dst": "secret:z", "tenant": "b", "evidence": "doc-3"},
+]
+
+def traverse(start, tenant, max_hops=2):
+    queue = deque([(start, 0)])
+    visited = {start}
+    result = []
+    while queue:
+        node, depth = queue.popleft()
+        if depth >= max_hops:
+            continue
+        for edge in edges:
+            if edge["src"] == node and edge["tenant"] == tenant:
+                result.append(edge)
+                if edge["dst"] not in visited:
+                    visited.add(edge["dst"])
+                    queue.append((edge["dst"], depth + 1))
+    return result
+
+result = traverse("org:acme", "a")
+assert len(result) == 2 and all(e["evidence"] for e in result)
+assert all(e["dst"] != "secret:z" for e in result)
+print(result)
+```
+
+### 实现说明、验收与项目边界
+
+这是属性图检索的参考算法，不是 PropertyGraphIndex 集成测试。实体使用命名空间稳定 ID，关系携带证据与租户。真实抽取器输出三元组后必须校验实体消歧、关系类型与证据，再写入 PropertyGraphIndex 的图存储；生产遍历还要限制边数、时间与高出度节点。

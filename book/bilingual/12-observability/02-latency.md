@@ -37,3 +37,45 @@ Pitfall: repeatedly benchmarking one cached question. Mix unique queries, hot an
 给每阶段分配延迟预算并进行压力阶梯实验。验收：报告最先饱和组件、p95 和可接受拒绝率。
 
 Allocate stage budgets and increase load in steps. Acceptance: identify the first bottleneck, p95, and acceptable rejection rate.
+
+## 代码实现补充 / Implementation supplement: 租户隔离的索引版本缓存与延迟分位数 / Tenant-scoped versioned caching and latency percentiles
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+import math
+import time
+
+cache = {}
+def cached_retrieve(tenant, principal, acl_revision, index_version, query, retrieve, ttl=60):
+    key = (tenant, principal, acl_revision, index_version, query)
+    now = time.monotonic()
+    entry = cache.get(key)
+    if entry and now < entry[0]:
+        return list(entry[1]), True
+    result = list(retrieve())
+    cache[key] = (now + ttl, tuple(result))
+    return result, False
+
+def percentile(values, fraction):
+    if not values or not 0 < fraction <= 1:
+        raise ValueError("invalid percentile input")
+    return sorted(values)[math.ceil(len(values) * fraction) - 1]
+
+args = ("a", "u1", "acl-3", "index-7", "hotel?")
+assert cached_retrieve(*args, lambda: ["node-1"])[1] is False
+assert cached_retrieve(*args, lambda: ["unexpected"])[1] is True
+assert cached_retrieve("b", *args[1:], lambda: ["node-2"])[0] == ["node-2"]
+assert percentile([10, 20, 30, 40, 100], 0.95) == 100
+print({"p95_ms": percentile([10, 20, 30, 40, 100], 0.95)})
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+ACL 修订号和索引版本必须来自服务端权威状态，不能信任客户端传值。此例没有并发合并、容量淘汰与跨进程共享，只用于解释正确缓存键。真实容量测试需分别测排队、检索、重排、首 token 与总耗时；五个样本的 p95 只是计算示例。
+
+ACL revisions and index versions must come from authoritative server state, not client input. This demonstrates cache keys, not request coalescing, eviction or shared storage. Load tests should separate queueing, retrieval, reranking, first token and total duration. Five-sample p95 is only an arithmetic example.

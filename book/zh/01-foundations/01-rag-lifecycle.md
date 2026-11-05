@@ -23,3 +23,32 @@ RAG 把回答依据从模型参数扩展到外部证据。离线链路负责加�
 ## 动手实验与验收
 
 画出一个制度问答系统的离线与在线数据流；在六个边界标出输入、输出和失败处理。验收：能分别解释“没读到”“没检到”和“编造了”。
+
+## 代码实现补充：从文档到证据的离线闭环
+
+依赖：Python 3.10+；安装 `llama-index-core==0.14.25`。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from llama_index.core import Document, VectorStoreIndex
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.llms import MockLLM
+from llama_index.core.node_parser import SentenceSplitter
+
+docs = [Document(text="Travel lodging limit is 500 CNY per night.",
+                 id_="travel-v2", metadata={"revision": "2"})]
+nodes = SentenceSplitter(chunk_size=64, chunk_overlap=8).get_nodes_from_documents(docs)
+index = VectorStoreIndex(nodes, embed_model=MockEmbedding(embed_dim=8))
+hits = index.as_retriever(similarity_top_k=1).retrieve("What is the lodging limit?")
+assert hits and hits[0].node.ref_doc_id == "travel-v2"
+response = index.as_query_engine(llm=MockLLM(max_tokens=32)).query("Lodging limit?")
+assert response.source_nodes
+print({"documents": len(docs), "nodes": len(nodes), "sources": len(response.source_nodes)})
+```
+
+### 实现说明、验收与项目边界
+
+文档 ID → 节点来源 → 检索证据 → 响应来源构成可检查链路。断言只证明对象连接正确；MockEmbedding 的排名和 MockLLM 的回答均不能证明语义质量。下一步替换真实嵌入，并用带标准证据的查询集评估。
+
+首次运行提示：核心包 tokenizer 可能下载编码缓存；离线环境请预置缓存并设置 `TIKTOKEN_CACHE_DIR`。无需模型密钥不代表首次运行不联网。

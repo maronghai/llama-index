@@ -41,3 +41,49 @@ Pitfall: presenting a technology list as a design. Explain the failure each comp
 完成一份项目验收矩阵与最小运行链路，用真实运行结果填表。验收：未运行项写未验证，不能用推测补齐。
 
 Create an acceptance matrix and minimal executable path, then populate it with real results. Acceptance: mark unrun items as unverified.
+
+## 代码实现补充 / Implementation supplement: 带权限、引用与验收的最小知识库 / A minimal knowledge base with authorization and citations
+
+依赖 / Dependencies: Python 3.10+; `llama-index-core==0.14.25`。
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from llama_index.core import VectorStoreIndex
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.schema import TextNode
+
+nodes = [
+    TextNode(id_="a-policy", text="Hotel allowance is CNY 500 per night.", metadata={"tenant": "a"}),
+    TextNode(id_="b-policy", text="Hotel allowance is CNY 900 per night.", metadata={"tenant": "b"}),
+]
+# Separate indexes make tenant isolation explicit for this tiny example.
+indexes = {tenant: VectorStoreIndex([n for n in nodes if n.metadata["tenant"] == tenant],
+                                  embed_model=MockEmbedding(embed_dim=8))
+           for tenant in {"a", "b"}}
+
+def ask(authenticated_tenant, question):
+    index = indexes.get(authenticated_tenant)
+    if index is None:
+        return {"answer": "Insufficient evidence", "citations": []}
+    hits = index.as_retriever(similarity_top_k=1).retrieve(question)
+    hits = [h for h in hits if h.node.metadata["tenant"] == authenticated_tenant]
+    if not hits:
+        return {"answer": "Insufficient evidence", "citations": []}
+    return {"answer": hits[0].node.text, "citations": [hits[0].node.node_id]}
+
+result = ask("a", "hotel allowance?")
+assert result["citations"] == ["a-policy"] and "900" not in result["answer"]
+assert ask("unknown", "hotel allowance?")["citations"] == []
+print(result)
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+先在单文件闭环实现 Document/Node 的来源与授权，再拆分摄取和在线服务。这个示例有意只返回原文，Mock 向量不提供语义拒答能力；租户内无关问题仍可能返回一条政策。进入生产前增加真实嵌入、相关性与无答案评测、来源版本、增量删除、持久化、trace 和发布门禁。
+
+Start with provenance and authorization in a single-file loop before separating ingestion and serving. This deliberately returns source text; mock vectors cannot support semantic abstention, so irrelevant in-tenant questions may still retrieve a policy. Add real embeddings, relevance and unanswerable evaluation, revisions, deletion, persistence, tracing and release gates.
+
+首次运行 / First run：tokenizer 可能下载编码缓存。离线运行需预置缓存并设置 `TIKTOKEN_CACHE_DIR`。Tokenization may download an encoding cache; provision it before offline use.

@@ -37,3 +37,48 @@ Pitfall: merging names creates false cross-company relationships. Use namespaces
 建立含同名公司的小图，设计两跳问题。验收：不会错误合并实体，每条答案路径可定位原始证据。
 
 Build a small graph with duplicate company names and a two-hop question. Acceptance: separate entities and evidence for every answer path.
+
+## 代码实现补充 / Implementation supplement: 有证据的属性图与受限遍历 / An evidence-bearing property graph and bounded traversal
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from collections import deque
+
+edges = [
+    {"src": "org:acme", "rel": "OWNS", "dst": "product:x", "tenant": "a", "evidence": "doc-1"},
+    {"src": "product:x", "rel": "USES", "dst": "tech:y", "tenant": "a", "evidence": "doc-2"},
+    {"src": "product:x", "rel": "USES", "dst": "secret:z", "tenant": "b", "evidence": "doc-3"},
+]
+
+def traverse(start, tenant, max_hops=2):
+    queue = deque([(start, 0)])
+    visited = {start}
+    result = []
+    while queue:
+        node, depth = queue.popleft()
+        if depth >= max_hops:
+            continue
+        for edge in edges:
+            if edge["src"] == node and edge["tenant"] == tenant:
+                result.append(edge)
+                if edge["dst"] not in visited:
+                    visited.add(edge["dst"])
+                    queue.append((edge["dst"], depth + 1))
+    return result
+
+result = traverse("org:acme", "a")
+assert len(result) == 2 and all(e["evidence"] for e in result)
+assert all(e["dst"] != "secret:z" for e in result)
+print(result)
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+这是属性图检索的参考算法，不是 PropertyGraphIndex 集成测试。实体使用命名空间稳定 ID，关系携带证据与租户。真实抽取器输出三元组后必须校验实体消歧、关系类型与证据，再写入 PropertyGraphIndex 的图存储；生产遍历还要限制边数、时间与高出度节点。
+
+This reference traversal is not a PropertyGraphIndex integration test. Entities use namespaced stable IDs and edges carry evidence and tenant ownership. Validate extracted triples, entity resolution and relation types before writing graph storage. Production traversal also needs edge, time and high-degree limits.

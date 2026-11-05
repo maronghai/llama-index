@@ -25,3 +25,37 @@ Pitfall: changing models, chunks, and store settings at once. Contain first, the
 ## Exercise and acceptance criteria
 
 Choose two failures and write diagnostic records with falsification conditions. Acceptance: observable evidence for each hypothesis and explicit elimination.
+
+## Implementation supplement: An executable diagnostic triage for eight failure classes
+
+Dependencies: Python 3.10+; Python standard library only.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+def diagnose(s):
+    findings = []
+    rules = [
+        (s["recall"] < 0.7, "retrieval", "inspect corpus, chunks and embeddings"),
+        (s["missing_conditions"] > 0, "omitted exceptions", "inspect parsing and context truncation"),
+        (s["duplicate_sources"] > 0, "duplicate ingestion", "inspect stable IDs and deletion"),
+        (s["unauthorized_hits"] > 0, "authorization leak", "block affected reads and audit derived artifacts"),
+        (s["p95_ms"] > 2000, "latency", "inspect queueing, concurrency and provider limits"),
+        (s["calls_per_query"] > 8, "cost amplification", "inspect decomposition and agent budgets"),
+        (not s["import_ok"], "upgrade regression", "restore tested package set"),
+        (s["online_success"] < s["offline_success"] - 0.15, "distribution shift", "evaluate real anonymized query slices"),
+    ]
+    for condition, symptom, next_step in rules:
+        if condition:
+            findings.append({"symptom": symptom, "next_step": next_step})
+    return findings
+
+sample = dict(recall=0.5, missing_conditions=1, duplicate_sources=2, unauthorized_hits=1,
+              p95_ms=3000, calls_per_query=12, import_ok=False, online_success=0.6, offline_success=0.95)
+assert len(diagnose(sample)) == 8
+print(diagnose(sample))
+```
+
+### Implementation, acceptance and production boundaries
+
+Thresholds are instructional; findings suggest investigations, not proven causes. Contain authorization leaks first and retain audit evidence. Connect traces and evaluations, prioritize alerts, and add falsification and regression checks. Do not automatically change models, chunks and storage together.

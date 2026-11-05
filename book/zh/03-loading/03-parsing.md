@@ -23,3 +23,44 @@
 ## 动手实验与验收
 
 选取含两栏、跨页表格、扫描页的三份样本，人工核对十个事实。验收：每个事实可定位原页、单位不丢失，失败样本有明确处理策略。
+
+## 代码实现补充：解析结果质量门禁
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class ParsedPage:
+    source: str
+    page: int
+    text: str
+    table_rows: list[list[str]]
+
+def validate(page):
+    errors = []
+    if not page.source or page.page < 1:
+        errors.append("missing provenance")
+    if len(page.text.strip()) < 20:
+        errors.append("sparse text: OCR review required")
+    if "\ufffd" in page.text:
+        errors.append("replacement character")
+    widths = {len(row) for row in page.table_rows}
+    if len(widths) > 1:
+        errors.append("ragged table")
+    return errors
+
+good = ParsedPage("policy.pdf", 1, "Hotel allowance: CNY 500 per night.",
+                  [["city", "limit"], ["Shanghai", "500"]])
+bad = ParsedPage("scan.pdf", 2, "\ufffd", [["city", "limit"], ["500"]])
+assert validate(good) == []
+assert len(validate(bad)) == 3
+print(validate(bad))
+```
+
+### 实现说明、验收与项目边界
+
+输入是解析服务已经返回的结构化记录，不在此代码中读取 PDF 或执行 OCR。稀疏正文、乱码、列宽不一致进入人工复核队列。字符数阈值不能证明表格语义正确，还需抽样核对跨页表头、单位、负号与脚注。

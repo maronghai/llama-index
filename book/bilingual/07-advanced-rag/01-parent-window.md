@@ -37,3 +37,39 @@ Pitfall: leaf vectors survive but parent text is missing. Validate relationships
 构造一条规则及后面的例外，比较仅句子、窗口和父块。验收：例外被保留，重复窗口不会重复消耗上下文。
 
 Compare sentence-only, window, and parent retrieval on a rule followed by an exception. Acceptance: preserve the exception without duplicated context.
+
+## 代码实现补充 / Implementation supplement: 句子窗口恢复与父块授权 / Sentence-window restoration and parent authorization
+
+依赖 / Dependencies: Python 3.10+; `llama-index-core==0.14.25`。
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from llama_index.core import Document
+from llama_index.core.node_parser import SentenceWindowNodeParser
+from llama_index.core.postprocessor import MetadataReplacementPostProcessor
+from llama_index.core.schema import NodeWithScore
+
+parser = SentenceWindowNodeParser.from_defaults(
+    window_size=1, window_metadata_key="window", original_text_metadata_key="original",
+    sentence_splitter=lambda text: [s.strip() + "." for s in text.split(".") if s.strip()])
+doc = Document(text="Default limit is 500. Approved trips may use 800. Keep receipts.",
+               metadata={"tenant": "a"})
+nodes = parser.get_nodes_from_documents([doc])
+hit = NodeWithScore(node=nodes[1], score=0.8)
+assert hit.node.metadata["tenant"] == "a"
+# Authorize every expanded source before applying this processor.
+expanded = MetadataReplacementPostProcessor(target_metadata_key="window").postprocess_nodes([hit])
+assert "500" in expanded[0].node.text and "800" in expanded[0].node.text
+print(expanded[0].node.text)
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+检索粒度是一句话，生成上下文扩展为相邻句。自定义切句函数使演示无需下载分句模型；生产需换成符合文档语言的句界识别。父块恢复同样必须验证扩展内容的租户与权限，不能只检查命中的子节点。
+
+Retrieval uses one sentence while synthesis receives neighboring sentences. The custom splitter avoids downloading a sentence model; use language-aware splitting in production. Parent restoration must authorize expanded content, not only the matched child.
+
+首次运行 / First run：tokenizer 可能下载编码缓存。离线运行需预置缓存并设置 `TIKTOKEN_CACHE_DIR`。Tokenization may download an encoding cache; provision it before offline use.

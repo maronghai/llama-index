@@ -37,3 +37,54 @@ Pitfall: creating hundreds of thousands of tasks at once. Use bounded workers an
 用可控延迟与故障模拟 API，比较无界和有界并发。验收：队列长度受限，取消无泄漏，重试次数可审计。
 
 Simulate latency and failures. Acceptance: bounded queues, clean cancellation, and auditable retry counts.
+
+## 代码实现补充 / Implementation supplement: 带超时与重试上限的异步调用 / Async calls with timeouts and bounded retries
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+import asyncio
+
+async def call_one(item, semaphore, operation, attempts=3):
+    for attempt in range(attempts):
+        try:
+            async with semaphore:
+                return await asyncio.wait_for(operation(item), timeout=1)
+        except (TimeoutError, ConnectionError):
+            if attempt + 1 == attempts:
+                raise
+            await asyncio.sleep(0.01 * (2 ** attempt))
+
+async def main():
+    calls = {}
+    async def unstable(item):
+        calls[item] = calls.get(item, 0) + 1
+        if item == 2 and calls[item] == 1:
+            raise ConnectionError("temporary failure")
+        await asyncio.sleep(0)
+        return item * 10
+    semaphore = asyncio.Semaphore(2)
+    tasks = [asyncio.create_task(call_one(i, semaphore, unstable)) for i in range(4)]
+    try:
+        results = await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    assert results == [0, 10, 20, 30] and calls[2] == 2
+    print(results)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+把 operation 替换为工作流 step 中的异步模型或检索调用即可复用。这里只重试超时和连接异常；取消信号不被吞掉，退避期间释放并发槽。生产还需总截止时间、带抖动退避、429 的 Retry-After、幂等键与全服务限额；Semaphore 只限制本进程并发，不等于每秒速率限制。
+
+Use an async model or retrieval call as operation inside a workflow step. Only timeouts and connection failures are retried; cancellation propagates and backoff releases the slot. Add overall deadlines, jitter, Retry-After handling, idempotency and service-wide quotas. A semaphore limits local concurrency, not requests per second.

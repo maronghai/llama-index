@@ -23,3 +23,33 @@
 ## 动手实验与验收
 
 设计一份 50 题评测计划和门禁表，数字标为拟定阈值而非实测成绩。验收：每项门禁有失败处置和负责人。
+
+## 代码实现补充：按来源分组切分与回归门禁
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+import hashlib
+
+rows = [{"source_id": "doc-" + str(i), "question": "q" + str(i)} for i in range(30)]
+def bucket(source_id):
+    return int(hashlib.sha256(source_id.encode()).hexdigest()[:8], 16) % 10
+train = [r for r in rows if bucket(r["source_id"]) < 7]
+test = [r for r in rows if bucket(r["source_id"]) >= 7]
+assert train and test
+assert not ({r["source_id"] for r in train} & {r["source_id"] for r in test})
+
+def release_gate(metrics):
+    return (metrics["recall_at_5"] >= 0.9 and metrics["unauthorized_hits"] == 0
+            and metrics["p95_ms"] <= 1800)
+
+assert release_gate({"recall_at_5": 0.93, "unauthorized_hits": 0, "p95_ms": 1500})
+assert not release_gate({"recall_at_5": 0.99, "unauthorized_hits": 1, "p95_ms": 100})
+print({"train": len(train), "test": len(test), "gate": "passed example assertions"})
+```
+
+### 实现说明、验收与项目边界
+
+同源问题固定落入同一分区，避免对同一文档只换问法产生泄漏。近重复文档仍可能跨分区，需先做聚类；还应按时间留出并覆盖无答案、冲突和权限题。门禁指标是合成输入，不代表真实系统成绩，小样本切片需同时报告样本量与不确定性。

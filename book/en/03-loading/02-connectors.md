@@ -23,3 +23,40 @@ Pitfall: immediate unlimited retries amplify rate-limit failures. Honor Retry-Af
 ## Exercise and acceptance criteria
 
 Simulate three pages and fail the second page. Acceptance: no premature checkpoint, no duplicate IDs, and deletions remove obsolete nodes and caches.
+
+## Implementation supplement: Stable connector IDs and incremental reconciliation
+
+Dependencies: Python 3.10+; Python standard library only.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+import hashlib
+import json
+
+def digest(row):
+    # Include metadata: an ACL change also requires publication.
+    payload = json.dumps(row, sort_keys=True, ensure_ascii=False).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+def reconcile(snapshot, rows):
+    ids = [r["source_id"] for r in rows]
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate source IDs")
+    current = {r["source_id"]: digest(r) for r in rows}
+    changed = [r for r in rows if snapshot.get(r["source_id"]) != current[r["source_id"]]]
+    removed = sorted(set(snapshot) - set(current))
+    return changed, removed, current
+
+first = [{"source_id": "wiki:17", "text": "Limit 500", "tenant": "a"}]
+changed, removed, snapshot = reconcile({}, first)
+assert len(changed) == 1 and not removed
+assert reconcile(snapshot, first)[0] == []
+changed, removed, next_snapshot = reconcile(snapshot, [])
+assert removed == ["wiki:17"]
+print({"deleted": removed})
+```
+
+### Implementation, acceptance and production boundaries
+
+Normalize LlamaHub reader output to this contract, then create Documents using source_id. Only complete successful snapshots permit deletion detection. A partial page is not a snapshot. Publish vectors, keyword records and cache changes before committing next_snapshot, using transactions or recoverable checkpoints.

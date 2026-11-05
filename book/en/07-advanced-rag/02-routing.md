@@ -23,3 +23,39 @@ Pitfall: nearly identical descriptions cause unstable selection. Specify boundar
 ## Exercise and acceptance criteria
 
 Create three sources and 15 routing questions including cross-source cases. Acceptance: a confusion matrix, fallback rate, and explanations for misroutes.
+
+## Implementation supplement: An inspectable multi-source routing baseline
+
+Dependencies: Python 3.10+; install `llama-index-core==0.14.25`.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+from llama_index.core import Document, SummaryIndex
+from llama_index.core.llms import MockLLM
+
+llm = MockLLM(max_tokens=16)
+engines = {
+    "travel": SummaryIndex.from_documents([Document(text="Hotel limit is 500.")]).as_query_engine(llm=llm),
+    "leave": SummaryIndex.from_documents([Document(text="Annual leave is 12 days.")]).as_query_engine(llm=llm),
+}
+
+def route(question):
+    q = question.lower()
+    matches = [name for name, terms in {"travel": ("hotel", "travel"), "leave": ("leave", "vacation")}.items()
+               if any(term in q for term in terms)]
+    return matches[0] if len(matches) == 1 else None
+
+assert route("hotel limit?") == "travel"
+assert route("hotel and leave rules?") is None
+selected = route("hotel limit?")
+response = engines[selected].query("hotel limit?")
+assert response.source_nodes
+print({"route": selected, "sources": len(response.source_nodes)})
+```
+
+### Implementation, acceptance and production boundaries
+
+Rule routing is an interpretable baseline for RouterQueryEngine, not its full replacement. Mixed and unknown questions return None for clarification or multi-source handling. Model selectors still need source allowlists, authorization and routing evaluation. Mock responses verify dispatch only.
+
+First-run note: core tokenization may download an encoding cache. Provision it and set `TIKTOKEN_CACHE_DIR` for offline use. No model key does not imply a network-free first run.

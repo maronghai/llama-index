@@ -34,3 +34,32 @@ Pitfall: notebooks work only because previous cells left hidden state. Use expli
 ## Exercise and acceptance criteria
 
 Install core and required integrations in an isolated environment and record pip freeze and Python version. Acceptance: a fresh process imports successfully and clearly distinguishes offline from service-dependent examples.
+
+## Implementation supplement: Explicit configuration and an environment fingerprint
+
+Dependencies: Python 3.10+; install `llama-index-core==0.14.25`.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+import sys
+from importlib.metadata import version
+from llama_index.core import Settings, Document, VectorStoreIndex
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.llms import MockLLM
+
+Settings.llm = MockLLM(max_tokens=16)
+Settings.embed_model = MockEmbedding(embed_dim=8)
+Settings.chunk_size = 128
+Settings.chunk_overlap = 16
+index = VectorStoreIndex.from_documents([Document(text="A reproducible offline baseline.")])
+assert index.as_retriever(similarity_top_k=1).retrieve("baseline")
+print({"python": sys.version.split()[0], "core": version("llama-index-core"),
+       "embedding_dim": 8, "chunk_size": Settings.chunk_size})
+```
+
+### Implementation, acceptance and production boundaries
+
+Run in an isolated process because Settings is global. Inject per-tenant model instances in production. Record this fingerprint plus corpus hashes, model versions and tokenizer; the core package version alone is insufficient.
+
+First-run note: core tokenization may download an encoding cache. Provision it and set `TIKTOKEN_CACHE_DIR` for offline use. No model key does not imply a network-free first run.

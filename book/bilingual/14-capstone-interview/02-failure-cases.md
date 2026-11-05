@@ -41,3 +41,41 @@ Pitfall: changing models, chunks, and store settings at once. Contain first, the
 任选两类故障，写一页排障记录并给出反证条件。验收：每个假设都有可观测证据，失败假设被明确排除。
 
 Choose two failures and write diagnostic records with falsification conditions. Acceptance: observable evidence for each hypothesis and explicit elimination.
+
+## 代码实现补充 / Implementation supplement: 八类故障的可执行诊断器 / An executable diagnostic triage for eight failure classes
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+def diagnose(s):
+    findings = []
+    rules = [
+        (s["recall"] < 0.7, "retrieval", "inspect corpus, chunks and embeddings"),
+        (s["missing_conditions"] > 0, "omitted exceptions", "inspect parsing and context truncation"),
+        (s["duplicate_sources"] > 0, "duplicate ingestion", "inspect stable IDs and deletion"),
+        (s["unauthorized_hits"] > 0, "authorization leak", "block affected reads and audit derived artifacts"),
+        (s["p95_ms"] > 2000, "latency", "inspect queueing, concurrency and provider limits"),
+        (s["calls_per_query"] > 8, "cost amplification", "inspect decomposition and agent budgets"),
+        (not s["import_ok"], "upgrade regression", "restore tested package set"),
+        (s["online_success"] < s["offline_success"] - 0.15, "distribution shift", "evaluate real anonymized query slices"),
+    ]
+    for condition, symptom, next_step in rules:
+        if condition:
+            findings.append({"symptom": symptom, "next_step": next_step})
+    return findings
+
+sample = dict(recall=0.5, missing_conditions=1, duplicate_sources=2, unauthorized_hits=1,
+              p95_ms=3000, calls_per_query=12, import_ok=False, online_success=0.6, offline_success=0.95)
+assert len(diagnose(sample)) == 8
+print(diagnose(sample))
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+这些阈值只是教学配置，输出是排查方向而不是根因结论。线上权限泄漏需先止损，再保留审计证据。接入 trace 和评测数据后按优先级告警，给每个假设补充反证与回归；不要因为命中规则便自动同时修改模型、切块和数据库。
+
+Thresholds are instructional; findings suggest investigations, not proven causes. Contain authorization leaks first and retain audit evidence. Connect traces and evaluations, prioritize alerts, and add falsification and regression checks. Do not automatically change models, chunks and storage together.

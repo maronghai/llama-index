@@ -23,3 +23,40 @@
 ## 动手实验与验收
 
 模拟三页数据，在第二页失败后重跑。验收：检查点不提前推进、稳定 ID 不重复、删除事件能清理旧节点和缓存。
+
+## 代码实现补充：连接器结果的稳定 ID 与增量对账
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+import hashlib
+import json
+
+def digest(row):
+    # Include metadata: an ACL change also requires publication.
+    payload = json.dumps(row, sort_keys=True, ensure_ascii=False).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+def reconcile(snapshot, rows):
+    ids = [r["source_id"] for r in rows]
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate source IDs")
+    current = {r["source_id"]: digest(r) for r in rows}
+    changed = [r for r in rows if snapshot.get(r["source_id"]) != current[r["source_id"]]]
+    removed = sorted(set(snapshot) - set(current))
+    return changed, removed, current
+
+first = [{"source_id": "wiki:17", "text": "Limit 500", "tenant": "a"}]
+changed, removed, snapshot = reconcile({}, first)
+assert len(changed) == 1 and not removed
+assert reconcile(snapshot, first)[0] == []
+changed, removed, next_snapshot = reconcile(snapshot, [])
+assert removed == ["wiki:17"]
+print({"deleted": removed})
+```
+
+### 实现说明、验收与项目边界
+
+把 LlamaHub 读取器的输出转换为此契约，再按 source_id 创建 Document。这里只接受完整、成功的快照；分页失败或仅返回一页时不能把缺失记录判为删除。先完成向量、关键词和缓存更新，最后提交 next_snapshot；真实存储需事务或可恢复检查点。

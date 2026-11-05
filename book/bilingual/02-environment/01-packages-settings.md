@@ -50,3 +50,36 @@ Pitfall: notebooks work only because previous cells left hidden state. Use expli
 在独立虚拟环境安装核心与需要的集成，记录 pip freeze 和 Python 版本。验收：全新进程能完成导入，且运行说明区分离线与外部服务依赖。
 
 Install core and required integrations in an isolated environment and record pip freeze and Python version. Acceptance: a fresh process imports successfully and clearly distinguishes offline from service-dependent examples.
+
+## 代码实现补充 / Implementation supplement: 显式配置与运行环境指纹 / Explicit configuration and an environment fingerprint
+
+依赖 / Dependencies: Python 3.10+; `llama-index-core==0.14.25`。
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+import sys
+from importlib.metadata import version
+from llama_index.core import Settings, Document, VectorStoreIndex
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.llms import MockLLM
+
+Settings.llm = MockLLM(max_tokens=16)
+Settings.embed_model = MockEmbedding(embed_dim=8)
+Settings.chunk_size = 128
+Settings.chunk_overlap = 16
+index = VectorStoreIndex.from_documents([Document(text="A reproducible offline baseline.")])
+assert index.as_retriever(similarity_top_k=1).retrieve("baseline")
+print({"python": sys.version.split()[0], "core": version("llama-index-core"),
+       "embedding_dim": 8, "chunk_size": Settings.chunk_size})
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+在独立进程运行，避免全局 Settings 影响其他实验。生产多租户服务应把不同模型作为构造参数注入。保存输出指纹，但还要额外记录语料哈希、模型版本及 tokenizer；一个核心包版本不足以复现实验。
+
+Run in an isolated process because Settings is global. Inject per-tenant model instances in production. Record this fingerprint plus corpus hashes, model versions and tokenizer; the core package version alone is insufficient.
+
+首次运行 / First run：tokenizer 可能下载编码缓存。离线运行需预置缓存并设置 `TIKTOKEN_CACHE_DIR`。Tokenization may download an encoding cache; provision it before offline use.

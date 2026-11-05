@@ -23,3 +23,52 @@
 ## 动手实验与验收
 
 模拟批准、拒绝、超时和重复回调。验收：同一动作最多执行一次，参数变化必须重新审核。
+
+## 代码实现补充：审批绑定内容与单次执行
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+import hashlib
+import json
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Proposal:
+    request_id: str
+    tenant: str
+    action: str
+    amount: int
+
+def fingerprint(proposal):
+    return hashlib.sha256(json.dumps(vars(proposal), sort_keys=True).encode()).hexdigest()
+
+executed = set()
+def execute(proposal, approval, reviewer_tenant):
+    if reviewer_tenant != proposal.tenant:
+        raise PermissionError("wrong reviewer tenant")
+    if approval != fingerprint(proposal):
+        raise PermissionError("proposal changed or not approved")
+    if proposal.request_id in executed:
+        return "already executed"
+    # In production, atomically claim the ID and use a downstream idempotency key.
+    executed.add(proposal.request_id)
+    return "executed"
+
+p = Proposal("r-1", "a", "refund", 100)
+approval = fingerprint(p)
+assert execute(p, approval, "a") == "executed"
+assert execute(p, approval, "a") == "already executed"
+try:
+    execute(Proposal("r-2", "a", "refund", 999), approval, "a")
+except PermissionError:
+    print("changed proposal denied")
+else:
+    raise AssertionError("approval not bound to content")
+```
+
+### 实现说明、验收与项目边界
+
+哈希不是审批凭证；此处假定 approval 来自已认证的人工审批服务。实际必须持久化审批人、权限、时间、过期时间与内容哈希，模型不能自行创建批准事件。内存 set 不提供跨进程或崩溃恢复的 exactly-once 保证，需数据库唯一键和下游幂等协议。

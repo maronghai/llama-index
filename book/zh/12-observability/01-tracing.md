@@ -23,3 +23,49 @@ Phoenix 等追踪与评估工具可辅助查看调用树和实验，但不能默
 ## 动手实验与验收
 
 对一个请求画调用树，模拟模型超时。验收：定位故障 span，不必查看敏感正文也能判断阶段与版本。
+
+## 代码实现补充：请求关联、分阶段耗时与异常记录
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+import json
+import time
+import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+request_id = ContextVar("request_id", default="unset")
+spans = []
+@contextmanager
+def span(name):
+    started = time.perf_counter()
+    record = {"trace_id": request_id.get(), "name": name, "status": "ok"}
+    try:
+        yield
+    except Exception as exc:
+        record.update(status="error", error_type=type(exc).__name__)
+        raise
+    finally:
+        record["duration_ms"] = (time.perf_counter() - started) * 1000
+        spans.append(record)
+
+token = request_id.set(uuid.uuid4().hex)
+try:
+    with span("query"):
+        with span("retrieve"):
+            evidence = ["policy-1"]
+        with span("synthesize"):
+            answer = "cited answer"
+finally:
+    request_id.reset(token)
+assert len({s["trace_id"] for s in spans}) == 1
+assert {s["name"] for s in spans} == {"query", "retrieve", "synthesize"}
+print(json.dumps(spans, indent=2))
+```
+
+### 实现说明、验收与项目边界
+
+这是不依赖采集平台的追踪契约演示，不会向 Phoenix 发送数据。接入 OpenTelemetry 时替换 span 实现为 tracer.start_as_current_span，并配置 OpenInference 的 LlamaIndex instrumentor 与 OTLP exporter。生产还需 parent span ID、采样、异步传播和脱敏；不要把原文、密钥或完整提示直接写入 trace。

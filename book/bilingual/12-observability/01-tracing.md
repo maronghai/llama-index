@@ -37,3 +37,53 @@ Pitfall: indefinite storage of private documents in debug logs. Default to minim
 对一个请求画调用树，模拟模型超时。验收：定位故障 span，不必查看敏感正文也能判断阶段与版本。
 
 Trace a request with a simulated model timeout. Acceptance: identify the failed stage and version without sensitive content.
+
+## 代码实现补充 / Implementation supplement: 请求关联、分阶段耗时与异常记录 / Request correlation, stage timing and exceptions
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+import json
+import time
+import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+request_id = ContextVar("request_id", default="unset")
+spans = []
+@contextmanager
+def span(name):
+    started = time.perf_counter()
+    record = {"trace_id": request_id.get(), "name": name, "status": "ok"}
+    try:
+        yield
+    except Exception as exc:
+        record.update(status="error", error_type=type(exc).__name__)
+        raise
+    finally:
+        record["duration_ms"] = (time.perf_counter() - started) * 1000
+        spans.append(record)
+
+token = request_id.set(uuid.uuid4().hex)
+try:
+    with span("query"):
+        with span("retrieve"):
+            evidence = ["policy-1"]
+        with span("synthesize"):
+            answer = "cited answer"
+finally:
+    request_id.reset(token)
+assert len({s["trace_id"] for s in spans}) == 1
+assert {s["name"] for s in spans} == {"query", "retrieve", "synthesize"}
+print(json.dumps(spans, indent=2))
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+这是不依赖采集平台的追踪契约演示，不会向 Phoenix 发送数据。接入 OpenTelemetry 时替换 span 实现为 tracer.start_as_current_span，并配置 OpenInference 的 LlamaIndex instrumentor 与 OTLP exporter。生产还需 parent span ID、采样、异步传播和脱敏；不要把原文、密钥或完整提示直接写入 trace。
+
+This illustrates a tracing contract without a collector and sends nothing to Phoenix. Replace span with tracer.start_as_current_span, then configure the OpenInference LlamaIndex instrumentor and an OTLP exporter. Production also needs parent IDs, sampling, async propagation and redaction; avoid raw documents, credentials and full prompts.

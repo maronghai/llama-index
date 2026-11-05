@@ -23,3 +23,42 @@ Pitfall: failed subqueries become zeros in calculations. Preserve missingness an
 ## Exercise and acceptance criteria
 
 Compare reports with different periods. Acceptance: reject incompatible comparisons, obtain aligned facts, then calculate with citations.
+
+## Implementation supplement: Budgeted sub-question planning and aggregation
+
+Dependencies: Python 3.10+; Python standard library only.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Task:
+    source: str
+    question: str
+
+facts = {"a": {"hotel": 500}, "b": {"hotel": 650}}
+
+def execute_plan(tasks, authorized, max_calls=3):
+    if len(tasks) > max_calls:
+        raise ValueError("plan exceeds call budget")
+    results = []
+    for task in tasks:
+        if task.source not in authorized:
+            raise PermissionError(task.source)
+        value = facts.get(task.source, {}).get(task.question)
+        results.append({"source": task.source, "value": value, "ok": value is not None})
+    return results
+
+plan = [Task("a", "hotel"), Task("b", "hotel")]
+rows = execute_plan(plan, {"a", "b"})
+assert all(r["ok"] for r in rows)
+difference = rows[1]["value"] - rows[0]["value"]
+assert difference == 150
+print({"evidence": rows, "difference": difference})
+```
+
+### Implementation, acceptance and production boundaries
+
+A manual plan separates decomposition quality from execution reliability. With SubQuestionQueryEngine, validate generated plans against source authorization, call and time budgets. Missing values are failures, not zero; align units, currencies and effective dates before comparison.

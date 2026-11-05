@@ -23,3 +23,42 @@ Pitfall: parent expansion reintroduces secrets after filtered retrieval. Reautho
 ## Exercise and acceptance criteria
 
 Inject a document requesting unauthorized tools and secrets. Acceptance: execution controls block violations even if the model proposes them.
+
+## Implementation supplement: Authorization before and after retrieval
+
+Dependencies: Python 3.10+; Python standard library only.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Principal:
+    tenant: str
+    groups: frozenset[str]
+
+records = [
+    {"id": "1", "tenant": "a", "groups": {"staff"}, "text": "Hotel limit 500"},
+    {"id": "2", "tenant": "a", "groups": {"finance"}, "text": "Private payroll"},
+    {"id": "3", "tenant": "b", "groups": {"staff"}, "text": "Tenant B secret"},
+]
+def allowed(user, row):
+    return row["tenant"] == user.tenant and bool(row["groups"] & user.groups)
+
+def retrieve(user, query):
+    # A real vector backend must enforce this predicate before top-k selection.
+    candidates = [r for r in records if allowed(user, r)]
+    ranked = sorted(candidates, key=lambda r: len(set(query.lower().split()) & set(r["text"].lower().split())), reverse=True)
+    return [{"id": r["id"], "text": r["text"]} for r in ranked[:3] if allowed(user, r)]
+
+user = Principal("a", frozenset({"staff"}))
+evidence = retrieve(user, "hotel limit")
+assert [r["id"] for r in evidence] == ["1"]
+assert retrieve(Principal("c", frozenset({"staff"})), "hotel") == []
+print(evidence)
+```
+
+### Implementation, acceptance and production boundaries
+
+Principal must come from an authenticated session. Filter before ranking and recheck before returning; apply the same rules to expanded parents and caches. This code does not detect prompt injection. Also constrain tools, treat retrieved text as data, validate outputs, and protect writes with review and idempotency.

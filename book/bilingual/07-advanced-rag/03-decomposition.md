@@ -37,3 +37,46 @@ Pitfall: failed subqueries become zeros in calculations. Preserve missingness an
 比较两份不同期间的报告。验收：先拒绝错误口径比较，补齐可比数据后再计算并逐项引用。
 
 Compare reports with different periods. Acceptance: reject incompatible comparisons, obtain aligned facts, then calculate with citations.
+
+## 代码实现补充 / Implementation supplement: 有预算的子问题计划与合并 / Budgeted sub-question planning and aggregation
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Task:
+    source: str
+    question: str
+
+facts = {"a": {"hotel": 500}, "b": {"hotel": 650}}
+
+def execute_plan(tasks, authorized, max_calls=3):
+    if len(tasks) > max_calls:
+        raise ValueError("plan exceeds call budget")
+    results = []
+    for task in tasks:
+        if task.source not in authorized:
+            raise PermissionError(task.source)
+        value = facts.get(task.source, {}).get(task.question)
+        results.append({"source": task.source, "value": value, "ok": value is not None})
+    return results
+
+plan = [Task("a", "hotel"), Task("b", "hotel")]
+rows = execute_plan(plan, {"a", "b"})
+assert all(r["ok"] for r in rows)
+difference = rows[1]["value"] - rows[0]["value"]
+assert difference == 150
+print({"evidence": rows, "difference": difference})
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+此处手写计划隔离“分解是否合理”和“执行是否可靠”。接入 SubQuestionQueryEngine 时让模型产生同类结构，再执行源授权、调用数和时间预算校验。缺失值必须标记失败，不能补成 0；金额、单位和生效日期一致后才可比较。
+
+A manual plan separates decomposition quality from execution reliability. With SubQuestionQueryEngine, validate generated plans against source authorization, call and time budgets. Missing values are failures, not zero; align units, currencies and effective dates before comparison.

@@ -23,3 +23,34 @@ Pitfall: citing a whole PDF leaves claims unverifiable. Retain passage/page mapp
 ## Exercise and acceptance criteria
 
 Create answerable, unanswerable, and version-conflict questions. Acceptance: grounded answer, abstention, and disclosed conflict respectively.
+
+## Implementation supplement: Conservative answers with evidence IDs
+
+Dependencies: Python 3.10+; install `llama-index-core==0.14.25`.
+
+Save the complete block as a standalone `.py` file and execute it in a separate process with `python filename.py`. No API key or paid model call is required. Assertions must pass and results are printed.
+
+```python
+from llama_index.core.schema import TextNode, NodeWithScore
+
+def answer(question, hits, allowed_ids):
+    trusted = [h for h in hits if h.node.node_id in allowed_ids]
+    if not trusted:
+        return {"answer": "Insufficient evidence", "citations": []}
+    # Extractive baseline: do not invent a claim not in evidence.
+    return {"answer": trusted[0].node.text,
+            "citations": [trusted[0].node.node_id]}
+
+node = TextNode(id_="policy-2-p3", text="Hotel allowance is CNY 500 per night.")
+hits = [NodeWithScore(node=node, score=0.9)]
+result = answer("Hotel allowance?", hits, {"policy-2-p3"})
+assert result["citations"] == ["policy-2-p3"]
+assert answer("Hotel allowance?", hits, set())["citations"] == []
+print(result)
+```
+
+### Implementation, acceptance and production boundaries
+
+This post-retrieval extractive baseline exposes a service signature; question is not used for relevance checking. Retrieval and relevance gates must run first. A generative synthesizer may replace extraction, but citation IDs must come from authorized evidence and support each claim. Nonempty evidence is not sufficient evidence.
+
+First-run note: core tokenization may download an encoding cache. Provision it and set `TIKTOKEN_CACHE_DIR` for offline use. No model key does not imply a network-free first run.

@@ -23,3 +23,41 @@
 ## 动手实验与验收
 
 给每阶段分配延迟预算并进行压力阶梯实验。验收：报告最先饱和组件、p95 和可接受拒绝率。
+
+## 代码实现补充：租户隔离的索引版本缓存与延迟分位数
+
+依赖：Python 3.10+；仅使用 Python 标准库。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+import math
+import time
+
+cache = {}
+def cached_retrieve(tenant, principal, acl_revision, index_version, query, retrieve, ttl=60):
+    key = (tenant, principal, acl_revision, index_version, query)
+    now = time.monotonic()
+    entry = cache.get(key)
+    if entry and now < entry[0]:
+        return list(entry[1]), True
+    result = list(retrieve())
+    cache[key] = (now + ttl, tuple(result))
+    return result, False
+
+def percentile(values, fraction):
+    if not values or not 0 < fraction <= 1:
+        raise ValueError("invalid percentile input")
+    return sorted(values)[math.ceil(len(values) * fraction) - 1]
+
+args = ("a", "u1", "acl-3", "index-7", "hotel?")
+assert cached_retrieve(*args, lambda: ["node-1"])[1] is False
+assert cached_retrieve(*args, lambda: ["unexpected"])[1] is True
+assert cached_retrieve("b", *args[1:], lambda: ["node-2"])[0] == ["node-2"]
+assert percentile([10, 20, 30, 40, 100], 0.95) == 100
+print({"p95_ms": percentile([10, 20, 30, 40, 100], 0.95)})
+```
+
+### 实现说明、验收与项目边界
+
+ACL 修订号和索引版本必须来自服务端权威状态，不能信任客户端传值。此例没有并发合并、容量淘汰与跨进程共享，只用于解释正确缓存键。真实容量测试需分别测排队、检索、重排、首 token 与总耗时；五个样本的 p95 只是计算示例。

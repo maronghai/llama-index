@@ -37,3 +37,44 @@ Pitfall: immediate unlimited retries amplify rate-limit failures. Honor Retry-Af
 模拟三页数据，在第二页失败后重跑。验收：检查点不提前推进、稳定 ID 不重复、删除事件能清理旧节点和缓存。
 
 Simulate three pages and fail the second page. Acceptance: no premature checkpoint, no duplicate IDs, and deletions remove obsolete nodes and caches.
+
+## 代码实现补充 / Implementation supplement: 连接器结果的稳定 ID 与增量对账 / Stable connector IDs and incremental reconciliation
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+import hashlib
+import json
+
+def digest(row):
+    # Include metadata: an ACL change also requires publication.
+    payload = json.dumps(row, sort_keys=True, ensure_ascii=False).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+def reconcile(snapshot, rows):
+    ids = [r["source_id"] for r in rows]
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate source IDs")
+    current = {r["source_id"]: digest(r) for r in rows}
+    changed = [r for r in rows if snapshot.get(r["source_id"]) != current[r["source_id"]]]
+    removed = sorted(set(snapshot) - set(current))
+    return changed, removed, current
+
+first = [{"source_id": "wiki:17", "text": "Limit 500", "tenant": "a"}]
+changed, removed, snapshot = reconcile({}, first)
+assert len(changed) == 1 and not removed
+assert reconcile(snapshot, first)[0] == []
+changed, removed, next_snapshot = reconcile(snapshot, [])
+assert removed == ["wiki:17"]
+print({"deleted": removed})
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+把 LlamaHub 读取器的输出转换为此契约，再按 source_id 创建 Document。这里只接受完整、成功的快照；分页失败或仅返回一页时不能把缺失记录判为删除。先完成向量、关键词和缓存更新，最后提交 next_snapshot；真实存储需事务或可恢复检查点。
+
+Normalize LlamaHub reader output to this contract, then create Documents using source_id. Only complete successful snapshots permit deletion detection. A partial page is not a snapshot. Publish vectors, keyword records and cache changes before committing next_snapshot, using transactions or recoverable checkpoints.

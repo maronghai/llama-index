@@ -23,3 +23,34 @@
 ## 动手实验与验收
 
 构造一条可回答、一条无答案和一条版本冲突的问题。验收：分别给出有据回答、拒答和冲突说明，不能都生成确定性结论。
+
+## 代码实现补充：带证据 ID 的保守回答
+
+依赖：Python 3.10+；安装 `llama-index-core==0.14.25`。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from llama_index.core.schema import TextNode, NodeWithScore
+
+def answer(question, hits, allowed_ids):
+    trusted = [h for h in hits if h.node.node_id in allowed_ids]
+    if not trusted:
+        return {"answer": "Insufficient evidence", "citations": []}
+    # Extractive baseline: do not invent a claim not in evidence.
+    return {"answer": trusted[0].node.text,
+            "citations": [trusted[0].node.node_id]}
+
+node = TextNode(id_="policy-2-p3", text="Hotel allowance is CNY 500 per night.")
+hits = [NodeWithScore(node=node, score=0.9)]
+result = answer("Hotel allowance?", hits, {"policy-2-p3"})
+assert result["citations"] == ["policy-2-p3"]
+assert answer("Hotel allowance?", hits, set())["citations"] == []
+print(result)
+```
+
+### 实现说明、验收与项目边界
+
+这是检索后抽取式基线，question 参数仅用于展示服务接口，尚未用于相关性判断；必须先由检索与相关性门禁筛选候选。生产可将正文交给响应合成器，但引用 ID 必须从授权证据集合选择，并检查每个事实是否被引用支持。非空证据不等于足以回答。
+
+首次运行提示：核心包 tokenizer 可能下载编码缓存；离线环境请预置缓存并设置 `TIKTOKEN_CACHE_DIR`。无需模型密钥不代表首次运行不联网。

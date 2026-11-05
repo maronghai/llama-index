@@ -37,3 +37,43 @@ Pitfall: nearly identical descriptions cause unstable selection. Specify boundar
 建立三类来源与 15 个路由问题，含跨源问题。验收：报告混淆矩阵和回退比例，解释每个误路由。
 
 Create three sources and 15 routing questions including cross-source cases. Acceptance: a confusion matrix, fallback rate, and explanations for misroutes.
+
+## 代码实现补充 / Implementation supplement: 可检查的多源路由基线 / An inspectable multi-source routing baseline
+
+依赖 / Dependencies: Python 3.10+; `llama-index-core==0.14.25`。
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from llama_index.core import Document, SummaryIndex
+from llama_index.core.llms import MockLLM
+
+llm = MockLLM(max_tokens=16)
+engines = {
+    "travel": SummaryIndex.from_documents([Document(text="Hotel limit is 500.")]).as_query_engine(llm=llm),
+    "leave": SummaryIndex.from_documents([Document(text="Annual leave is 12 days.")]).as_query_engine(llm=llm),
+}
+
+def route(question):
+    q = question.lower()
+    matches = [name for name, terms in {"travel": ("hotel", "travel"), "leave": ("leave", "vacation")}.items()
+               if any(term in q for term in terms)]
+    return matches[0] if len(matches) == 1 else None
+
+assert route("hotel limit?") == "travel"
+assert route("hotel and leave rules?") is None
+selected = route("hotel limit?")
+response = engines[selected].query("hotel limit?")
+assert response.source_nodes
+print({"route": selected, "sources": len(response.source_nodes)})
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+显式规则路由是 RouterQueryEngine 的可解释基线，不是该类的完整替代。混合问题和未知问题返回 None，交给澄清或多源流程；不要静默选第一项。替换为模型 selector 后，仍保留允许源列表、授权与误路由评测。Mock 响应只验证被选引擎被调用。
+
+Rule routing is an interpretable baseline for RouterQueryEngine, not its full replacement. Mixed and unknown questions return None for clarification or multi-source handling. Model selectors still need source allowlists, authorization and routing evaluation. Mock responses verify dispatch only.
+
+首次运行 / First run：tokenizer 可能下载编码缓存。离线运行需预置缓存并设置 `TIKTOKEN_CACHE_DIR`。Tokenization may download an encoding cache; provision it before offline use.

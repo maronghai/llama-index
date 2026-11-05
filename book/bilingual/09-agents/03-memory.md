@@ -37,3 +37,46 @@ Pitfall: sharing chat history across users. Isolate session state and test concu
 运行两位用户的交错会话，再撤销其中一位权限。验收：无串话，撤权材料不进入后续上下文。
 
 Interleave conversations from two users and revoke one scope. Acceptance: no cross-talk or revoked evidence in later context.
+
+## 代码实现补充 / Implementation supplement: 按租户与会话隔离的有界记忆 / Bounded memory isolated by tenant and session
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from collections import defaultdict
+
+class SessionMemory:
+    def __init__(self, max_chars=120):
+        self.data = defaultdict(list)
+        self.max_chars = max_chars
+
+    def append(self, tenant, user, session, role, text):
+        if role not in {"user", "assistant"}:
+            raise ValueError("untrusted role")
+        if len(text) > self.max_chars:
+            raise ValueError("message too long")
+        key = (tenant, user, session)
+        self.data[key].append({"role": role, "content": text})
+        while sum(len(x["content"]) for x in self.data[key]) > self.max_chars:
+            self.data[key].pop(0)
+
+    def read(self, tenant, user, session):
+        return [dict(x) for x in self.data.get((tenant, user, session), [])]
+
+memory = SessionMemory()
+memory.append("a", "u1", "s1", "user", "Hotel policy?")
+assert memory.read("b", "u1", "s1") == []
+assert memory.read("a", "u2", "s1") == []
+assert len(memory.read("a", "u1", "s1")) == 1
+print(memory.read("a", "u1", "s1"))
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+这是内存存储适配层示例，不是对当前 LlamaIndex Memory API 的封装。接入聊天引擎前把 read 的结果转换为 ChatMessage。字符预算仅供演示，生产应使用模型 tokenizer，按完整对话轮裁剪，加 TTL、加密、并发控制和删除接口；摘要也继承租户与删除要求。
+
+This illustrates a storage adapter, not the current LlamaIndex Memory API. Convert read results into ChatMessage objects before calling a chat engine. Character limits are illustrative; production needs token budgets, complete-turn trimming, TTL, encryption, concurrency control and deletion, including summaries.

@@ -53,3 +53,47 @@ Pitfall: every replica rebuilds a large index on startup. Build separately and s
 设计一次新嵌入模型灰度发布。验收：旧版本可回滚，权限负例通过，观察窗口内有质量与成本指标。
 
 Plan a canary embedding migration. Acceptance: rollback, access-denial checks, and quality/cost metrics during observation.
+
+## 代码实现补充 / Implementation supplement: 可回滚的版本发布门禁 / A rollback-capable release gate
+
+依赖 / Dependencies: Python 3.10+; 仅标准库 / standard library only.
+
+将完整代码保存为独立 `.py` 文件，在独立进程执行 `python filename.py`。无需密钥，无付费调用；验收为断言通过并输出结果。
+
+Save the full block as a standalone `.py` file and run it in a separate process. No API key or paid call is needed; assertions must pass and results are printed.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Artifact:
+    version: str
+    embedding: str
+    dimension: int
+    acl_schema: str
+
+active = Artifact("v1", "embed-A", 384, "acl-2")
+previous = None
+
+def publish(candidate, metrics):
+    global active, previous
+    if candidate.dimension <= 0 or not candidate.version:
+        raise ValueError("invalid artifact")
+    if metrics["unauthorized_hits"] != 0 or metrics["recall"] < 0.9:
+        raise ValueError("evaluation gate failed")
+    previous, active = active, candidate
+
+candidate = Artifact("v2", "embed-A", 384, "acl-2")
+publish(candidate, {"unauthorized_hits": 0, "recall": 0.93})
+assert active.version == "v2" and previous.version == "v1"
+# Atomic pointer swap is simulated by assignment in this single-process example.
+active, previous = previous, active
+assert active.version == "v1"
+print(active)
+```
+
+### 实现说明、验收与项目边界 / Implementation, acceptance and production boundaries
+
+每个 Artifact 在独立存储中构建完整索引，运行时将嵌入模型、维度、权限 schema 与索引作为一个整体加载。此例只模拟单进程指针交换，不实现 HTTP 服务或分布式原子发布。生产使用带比较交换的配置存储、就绪探针、预热、灰度和旧版本保留。
+
+Build each artifact in isolated storage and load its embedding, dimension, ACL schema and index as one unit. Assignment here only simulates a single-process pointer swap, not HTTP serving or distributed atomic release. Use compare-and-swap configuration, readiness probes, warmup, canaries and retained prior artifacts.

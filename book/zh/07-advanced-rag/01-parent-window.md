@@ -23,3 +23,35 @@
 ## 动手实验与验收
 
 构造一条规则及后面的例外，比较仅句子、窗口和父块。验收：例外被保留，重复窗口不会重复消耗上下文。
+
+## 代码实现补充：句子窗口恢复与父块授权
+
+依赖：Python 3.10+；安装 `llama-index-core==0.14.25`。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from llama_index.core import Document
+from llama_index.core.node_parser import SentenceWindowNodeParser
+from llama_index.core.postprocessor import MetadataReplacementPostProcessor
+from llama_index.core.schema import NodeWithScore
+
+parser = SentenceWindowNodeParser.from_defaults(
+    window_size=1, window_metadata_key="window", original_text_metadata_key="original",
+    sentence_splitter=lambda text: [s.strip() + "." for s in text.split(".") if s.strip()])
+doc = Document(text="Default limit is 500. Approved trips may use 800. Keep receipts.",
+               metadata={"tenant": "a"})
+nodes = parser.get_nodes_from_documents([doc])
+hit = NodeWithScore(node=nodes[1], score=0.8)
+assert hit.node.metadata["tenant"] == "a"
+# Authorize every expanded source before applying this processor.
+expanded = MetadataReplacementPostProcessor(target_metadata_key="window").postprocess_nodes([hit])
+assert "500" in expanded[0].node.text and "800" in expanded[0].node.text
+print(expanded[0].node.text)
+```
+
+### 实现说明、验收与项目边界
+
+检索粒度是一句话，生成上下文扩展为相邻句。自定义切句函数使演示无需下载分句模型；生产需换成符合文档语言的句界识别。父块恢复同样必须验证扩展内容的租户与权限，不能只检查命中的子节点。
+
+首次运行提示：核心包 tokenizer 可能下载编码缓存；离线环境请预置缓存并设置 `TIKTOKEN_CACHE_DIR`。无需模型密钥不代表首次运行不联网。

@@ -26,3 +26,9 @@ Study method: explain a failure, run an experiment, and repeat on your data. Cho
 - [Workflow API](https://developers.llamaindex.ai/python/workflows-api-reference/workflow/)
 - [Workflows Introduction](https://developers.llamaindex.ai/python/llamaagents/workflows/)
 - [Events API](https://developers.llamaindex.ai/python/workflows-api-reference/events/)
+
+## Code supplement and validation scope
+
+One complete code block was added to each of the 25 sections that lacked Python implementations, synchronized across all editions. All 42 sections per edition now contain Python. The 25 new examples executed successfully with Python 3.12.14; core examples used llama-index-core 0.14.25. All 126 Python blocks across the three editions parsed successfully and matching sections contained identical code. The 17 original examples were not re-executed in this update. Real models, databases and Phoenix integrations were not end-to-end tested.
+
+Core tokenization may download an encoding cache on first use. Provision that cache and set TIKTOKEN_CACHE_DIR for offline deployment. No API key does not mean a network-free first run. Several initial index runs timed out and succeeded once the cache was available. Mock examples establish connectivity only; standard-library production examples illustrate boundaries rather than complete production services.

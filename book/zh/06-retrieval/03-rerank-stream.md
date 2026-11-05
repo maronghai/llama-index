@@ -23,3 +23,41 @@ Cross-encoder 对查询与候选文本联合编码，通常比单独向量相似
 ## 动手实验与验收
 
 测量无重排与重排的候选命中、首 token 和总延迟，再模拟断连。验收：能证明质量收益是否值得新增延迟，取消确实终止工作。
+
+## 代码实现补充：候选重排、空分数与流式边界
+
+依赖：Python 3.10+；安装 `llama-index-core==0.14.25`。
+
+运行方式：将下面完整代码保存为独立 `.py` 文件，在独立进程执行 `python 文件名.py`；无需 API Key，不调用付费模型服务。成功时断言通过并打印结果。
+
+```python
+from llama_index.core.schema import TextNode, NodeWithScore
+
+def lexical_rerank(question, candidates):
+    terms = set(question.lower().split())
+    def score(hit):
+        return len(terms & set(hit.node.text.lower().split())) / max(1, len(terms))
+    return sorted([(score(h), h) for h in candidates], key=lambda x: x[0], reverse=True)
+
+def stream_selected(question, candidates, threshold=0.5):
+    ranked = lexical_rerank(question, candidates)
+    if not ranked or ranked[0][0] < threshold:
+        yield "Insufficient evidence"
+        return
+    # Evidence is selected before the first visible token.
+    for word in ranked[0][1].node.text.split():
+        yield word + " "
+
+candidates = [NodeWithScore(node=TextNode(text="office lunch noon"), score=None),
+              NodeWithScore(node=TextNode(text="hotel allowance 500"), score=0.6)]
+result = "".join(stream_selected("hotel allowance", candidates))
+assert result.strip() == "hotel allowance 500"
+assert "Insufficient" in "".join(stream_selected("payroll", candidates))
+print(result)
+```
+
+### 实现说明、验收与项目边界
+
+词重合只是可解释的重排替身，不是 Cross-Encoder，也不适合直接处理未分词中文。真实项目可替换为 SentenceTransformerRerank，安装相应 postprocessor 集成并预置模型。阈值针对此重排器标定，不能混用向量距离；此处展示的是分块输出边界，并未调用模型流式接口。
+
+首次运行提示：核心包 tokenizer 可能下载编码缓存；离线环境请预置缓存并设置 `TIKTOKEN_CACHE_DIR`。无需模型密钥不代表首次运行不联网。
