@@ -56,3 +56,66 @@ Pitfall: assuming automatic resumption after restart. Use a durable runtime or e
 ## Exercise and acceptance criteria
 
 Run the minimal workflow and add an invalid-input branch. Acceptance: invalid input never reaches retrieval and event fields are validated.
+
+## Code Implementation Supplement:Event-Driven Decoupled RAG Pipeline with workflows
+
+Python 3.10+; `llama-index-core==0.14.25`. Hybrid search additionally requires `llama-index-retrievers-bm25==0.8.0`; SQL uses SQLAlchemy; workflows uses the core dependency `llama-index-workflows`. Run the complete block in its own process. Tokenizer initialization may require a cache download; provision `TIKTOKEN_CACHE_DIR` for offline use.
+
+Offline fixtures validate interfaces, provenance, and control flow, not semantic quality or security. Real-model branches additionally require `llama-index-llms-openai`, `llama-index-embeddings-openai`, and, for reranking, `llama-index-postprocessor-sbert-rerank`; set `RUN_REAL_MODELS=1`, `OPENAI_API_KEY`, `LLM_MODEL`, and `EMBED_MODEL` as required by the block. External-model branches have not been executed in this revision.
+
+```python
+import asyncio
+from workflows import Workflow, step
+from workflows.events import Event, StartEvent, StopEvent
+from llama_index.core import Document, VectorStoreIndex
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.llms import MockLLM
+from llama_index.core.response_synthesizers import get_response_synthesizer
+
+class QueryReady(Event):
+    query: str
+class EvidenceReady(Event):
+    query: str
+    nodes: list
+class RAGWorkflow(Workflow):
+    def __init__(self, retriever, **kwargs):
+        super().__init__(**kwargs)
+        self.retriever = retriever
+        self.synthesizer = get_response_synthesizer(llm=MockLLM(max_tokens=16))
+    @step
+    async def validate(self, ev: StartEvent) -> QueryReady:
+        query = str(ev.get('query', '')).strip()
+        if not query or len(query) > 500:
+            raise ValueError('Query must contain 1..500 characters')
+        return QueryReady(query=query)
+    @step
+    async def retrieve(self, ev: QueryReady) -> EvidenceReady:
+        nodes = await self.retriever.aretrieve(ev.query)
+        return EvidenceReady(query=ev.query, nodes=nodes)
+    @step
+    async def answer(self, ev: EvidenceReady) -> StopEvent:
+        if not ev.nodes:
+            return StopEvent(result={'status': 'no_evidence', 'sources': []})
+        response = await self.synthesizer.asynthesize(query=ev.query, nodes=ev.nodes)
+        return StopEvent(result={'status': 'ok', 'answer': str(response),
+            'sources': [n.node.ref_doc_id for n in response.source_nodes]})
+async def main():
+    index = VectorStoreIndex.from_documents([
+        Document(text='Vacation requests require manager approval.', id_='policy')],
+        embed_model=MockEmbedding(embed_dim=8))
+    flow = RAGWorkflow(index.as_retriever(similarity_top_k=1), timeout=10)
+    result = await flow.run(query='How do I request vacation?')
+    assert result['sources'] == ['policy']
+    class EmptyRetriever:
+        async def aretrieve(self, query):
+            return []
+    empty = await RAGWorkflow(EmptyRetriever(), timeout=10).run(query='Unknown policy?')
+    assert empty['status'] == 'no_evidence'
+    print(result, empty)
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+### Architecture and execution boundaries
+
+The workflow invokes an actual asynchronous retriever and synthesizer and tests the no-evidence branch. Input length checks are not prompt-injection protection. Event decoupling alone does not guarantee throughput; measure blocking calls, resource budgets, and cancellation propagation.

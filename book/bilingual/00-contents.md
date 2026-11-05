@@ -85,3 +85,10 @@
 - [14.01 从需求到可验收的企业知识库 / An enterprise knowledge base from requirements to acceptance](14-capstone-interview/01-capstone.md)
 - [14.02 八类典型故障与修复思路 / Eight recurring failures and their remedies](14-capstone-interview/02-failure-cases.md)
 - [14.03 重点难点地图与面试表达 / Priority map and interview communication](14-capstone-interview/03-interview-map.md)
+
+
+## 本轮进阶实现增补与验证
+
+本轮验证：17 个新增完整示例中 15 个独立运行通过；属性图和答案评估的接口问题已修正，修改后没有再验证。外部模型分支未执行。
+
+Validation: 15 of 17 new complete examples passed in isolated processes. Interface issues in the property-graph and answer-evaluation examples were corrected without rerunning. External-model branches were not executed.

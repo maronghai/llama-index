@@ -54,3 +54,54 @@ print({"good": good, "bad": bad})
 ### Implementation, acceptance and production boundaries
 
 Manually annotate atomic facts and evidence for deterministic scoring and judge calibration. Citation support uses a strict rule: every listed reference must support the claim. This is neither natural-language entailment nor a replacement for FaithfulnessEvaluator. Record judge prompts, models, audits and abstention policy.
+
+## Code Implementation Supplement:Faithfulness and Relevancy Evaluation Framework and Regression Quality Gates
+
+Python 3.10+; `llama-index-core==0.14.25`. Hybrid search additionally requires `llama-index-retrievers-bm25==0.8.0`; SQL uses SQLAlchemy; workflows uses the core dependency `llama-index-workflows`. Run the complete block in its own process. Tokenizer initialization may require a cache download; provision `TIKTOKEN_CACHE_DIR` for offline use.
+
+Offline fixtures validate interfaces, provenance, and control flow, not semantic quality or security. Real-model branches additionally require `llama-index-llms-openai`, `llama-index-embeddings-openai`, and, for reranking, `llama-index-postprocessor-sbert-rerank`; set `RUN_REAL_MODELS=1`, `OPENAI_API_KEY`, `LLM_MODEL`, and `EMBED_MODEL` as required by the block. External-model branches have not been executed in this revision.
+
+```python
+import asyncio
+import os
+from llama_index.core.evaluation import FaithfulnessEvaluator, RelevancyEvaluator
+from llama_index.core.llms import MockLLM
+from llama_index.core.base.llms.types import CompletionResponse
+
+class JudgeFixture(MockLLM):
+    # Controlled responses test evaluator plumbing only, not judgement quality.
+    verdict: str = 'YES'
+    def __init__(self, verdict='YES'):
+        super().__init__()
+        self.verdict = verdict
+    def complete(self, prompt, formatted=False, **kwargs):
+        return CompletionResponse(text=self.verdict)
+    async def acomplete(self, prompt, formatted=False, **kwargs):
+        return self.complete(prompt, formatted, **kwargs)
+async def evaluate(judge, answer):
+    args = dict(query='How many days of annual leave?', response=answer,
+        contexts=['Full-time employees receive 15 days of annual leave.'])
+    faith = await FaithfulnessEvaluator(llm=judge).aevaluate(**args)
+    relevant = await RelevancyEvaluator(llm=judge).aevaluate(**args)
+    return {'faith': faith, 'relevant': relevant}
+def gate(result):
+    return all(not r.invalid_result and r.passing is True for r in result.values())
+async def main():
+    good = await evaluate(JudgeFixture(verdict='YES'), '15 days.')
+    bad = await evaluate(JudgeFixture(verdict='NO'), 'Free flights for everyone.')
+    assert gate(good) and not gate(bad)
+    print({k: {'score': v.score, 'passing': v.passing, 'feedback': v.feedback}
+           for k, v in bad.items()})
+    if os.getenv('RUN_REAL_MODELS') == '1':
+        from llama_index.llms.openai import OpenAI
+        judge = OpenAI(model=os.environ['LLM_MODEL'], temperature=0, timeout=30)
+        for answer in ['15 days.', 'Free flights for everyone.']:
+            result = await evaluate(judge, answer)
+            print(answer, 'gate=', gate(result), result)
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+### Architecture and execution boundaries
+
+Actually calls both evaluators, records score, passing, and feedback, and tests accepting and rejecting gates. A fixed offline judge validates parsing and control flow only, not answer quality. RUN_REAL_MODELS=1 evaluates positive and negative cases with a real judge; compare against human labels and use an independent model to reduce self-evaluation bias.

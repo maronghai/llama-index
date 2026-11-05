@@ -62,3 +62,92 @@ print({"evidence": rows, "difference": difference})
 ### 实现说明、验收与项目边界
 
 此处手写计划隔离“分解是否合理”和“执行是否可靠”。接入 SubQuestionQueryEngine 时让模型产生同类结构，再执行源授权、调用数和时间预算校验。缺失值必须标记失败，不能补成 0；金额、单位和生效日期一致后才可比较。
+
+## 完整代码实现补充：子问题查询引擎 SubQuestionQueryEngine 分解与执行闭环
+
+Python 3.10+；`llama-index-core==0.14.25`。混合检索另需 `llama-index-retrievers-bm25==0.8.0`，SQL 依赖 SQLAlchemy，事件流依赖 `llama-index-workflows`（core 的依赖）。独立进程运行完整代码块；首次 tokenizer 初始化可能读取或下载缓存，请离线部署时预置 `TIKTOKEN_CACHE_DIR`。
+
+离线夹具只验证接口、来源和控制流，不验证语义质量或安全性。启用真实模型的分支需额外安装 `llama-index-llms-openai`、`llama-index-embeddings-openai`，重排分支另需 `llama-index-postprocessor-sbert-rerank`；设置 `RUN_REAL_MODELS=1`、`OPENAI_API_KEY`、`LLM_MODEL`、`EMBED_MODEL`（按示例需要）。这些外部模型分支本次未运行。
+
+```python
+import hashlib
+import math
+import re
+from llama_index.core.embeddings import MockEmbedding as _MockEmbedding
+
+class MockEmbedding(_MockEmbedding):
+    # Test-only hashed lexical vectors; NOT a semantic embedding model.
+    def _vector(self, text):
+        values = [0.0] * 256
+        for word in re.findall(r"[a-z0-9]+", text.lower()):
+            slot = int(hashlib.sha256(word.encode()).hexdigest()[:8], 16) % 256
+            values[slot] += 1.0
+        norm = math.sqrt(sum(v*v for v in values)) or 1.0
+        return [v / norm for v in values]
+    def _get_text_embedding(self, text):
+        return self._vector(text)
+    def _get_query_embedding(self, query):
+        return self._vector(query)
+    async def _aget_query_embedding(self, query):
+        return self._vector(query)
+
+from typing import Sequence, List
+from llama_index.core import Document, VectorStoreIndex, Settings, QueryBundle
+from llama_index.core.llms import MockLLM
+from llama_index.core.tools import QueryEngineTool, ToolMetadata
+from llama_index.core.query_engine import SubQuestionQueryEngine
+from llama_index.core.question_gen.types import BaseQuestionGenerator, SubQuestion
+
+embed_model = MockEmbedding(embed_dim=256)
+llm = MockLLM(max_tokens=64)
+Settings.embed_model = embed_model
+Settings.llm = llm
+
+docs_2024 = [Document(text="Year 2024 Revenue was 100M USD.", id_="doc_2024")]
+docs_2025 = [Document(text="Year 2025 Revenue was 130M USD.", id_="doc_2025")]
+
+idx_2024 = VectorStoreIndex.from_documents(docs_2024, embed_model=embed_model)
+idx_2025 = VectorStoreIndex.from_documents(docs_2025, embed_model=embed_model)
+
+tools = [
+    QueryEngineTool(query_engine=idx_2024.as_query_engine(llm=llm), metadata=ToolMetadata(name="fin_2024", description="2024 Financials")),
+    QueryEngineTool(query_engine=idx_2025.as_query_engine(llm=llm), metadata=ToolMetadata(name="fin_2025", description="2025 Financials"))
+]
+
+# 确定性子问题生成器：将复合对比转化为两个原子查询
+class DeterministicQuestionGenerator(BaseQuestionGenerator):
+    def _get_prompts(self):
+        return {}
+    def _update_prompts(self, prompts):
+        pass
+    def generate(self, tools: Sequence[ToolMetadata], query: QueryBundle) -> List[SubQuestion]:
+        return [
+            SubQuestion(sub_question="What was the revenue in 2024?", tool_name="fin_2024"),
+            SubQuestion(sub_question="What was the revenue in 2025?", tool_name="fin_2025")
+        ]
+    async def agenerate(self, tools: Sequence[ToolMetadata], query: QueryBundle) -> List[SubQuestion]:
+        return self.generate(tools, query)
+
+sub_engine = SubQuestionQueryEngine.from_defaults(
+    query_engine_tools=tools,
+    question_gen=DeterministicQuestionGenerator(),
+    llm=llm,
+    use_async=False
+)
+
+response = sub_engine.query("Compare revenue between 2024 and 2025")
+assert response.source_nodes is not None
+print("SubQuestionQueryEngine verified; gathered source count:", len(response.source_nodes))
+
+source_ids = {s.node.ref_doc_id for s in response.source_nodes if s.node.ref_doc_id}
+assert {'doc_2024', 'doc_2025'} <= source_ids
+# Compute with verified structured values rather than asking the LLM to do arithmetic.
+revenue = {'2024': 100, '2025': 130}
+growth = (revenue['2025'] / revenue['2024'] - 1) * 100
+assert round(growth, 2) == 30.0
+print({'verified_growth_percent': round(growth, 2)})
+```
+
+### 架构说明与工程边界
+
+确定性生成器只适用于本例的两年比较，不会泛化分解任意问题。真实系统可用 LLMQuestionGenerator.from_defaults(llm=真实模型) 替换，并验证工具名、子问题数量和授权范围；两个年度来源均进入结果后，对结构化数值单独计算增长率。

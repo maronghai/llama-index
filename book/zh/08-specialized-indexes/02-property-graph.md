@@ -64,3 +64,65 @@ print(result)
 ### 实现说明、验收与项目边界
 
 这是属性图检索的参考算法，不是 PropertyGraphIndex 集成测试。实体使用命名空间稳定 ID，关系携带证据与租户。真实抽取器输出三元组后必须校验实体消歧、关系类型与证据，再写入 PropertyGraphIndex 的图存储；生产遍历还要限制边数、时间与高出度节点。
+
+## 完整代码实现补充：SimplePropertyGraphStore 实体与属性关系图完整构建与拓扑遍历
+
+Python 3.10+；`llama-index-core==0.14.25`。混合检索另需 `llama-index-retrievers-bm25==0.8.0`，SQL 依赖 SQLAlchemy，事件流依赖 `llama-index-workflows`（core 的依赖）。独立进程运行完整代码块；首次 tokenizer 初始化可能读取或下载缓存，请离线部署时预置 `TIKTOKEN_CACHE_DIR`。
+
+离线夹具只验证接口、来源和控制流，不验证语义质量或安全性。启用真实模型的分支需额外安装 `llama-index-llms-openai`、`llama-index-embeddings-openai`，重排分支另需 `llama-index-postprocessor-sbert-rerank`；设置 `RUN_REAL_MODELS=1`、`OPENAI_API_KEY`、`LLM_MODEL`、`EMBED_MODEL`（按示例需要）。这些外部模型分支本次未运行。
+
+```python
+from llama_index.core.graph_stores.simple_labelled import SimplePropertyGraphStore
+from llama_index.core.graph_stores.types import EntityNode, Relation
+
+graph_store = SimplePropertyGraphStore()
+
+# 1. 显式创建实体节点 (EntityNode)
+e1 = EntityNode(name="Alice", label="ENGINEER", properties={"team": "Core Platform"})
+e2 = EntityNode(name="AuthService", label="MICROSERVICE", properties={"tier": "P0"})
+graph_store.upsert_nodes([e1, e2])
+
+# 2. 显式建立带属性的关系边 (Relation)
+rel = Relation(
+    source_id=e1.id,
+    target_id=e2.id,
+    label="MAINTAINS",
+    properties={"oncall": True, "since": "2023"}
+)
+graph_store.upsert_relations([rel])
+
+# 3. 验证关系检索与图谱拓扑
+triplets = graph_store.get_triplets(entity_names=[e1.id])
+assert len(triplets) == 1
+assert triplets[0][0].name == "Alice"
+assert triplets[0][1].label == "MAINTAINS"
+assert triplets[0][2].name == "AuthService"
+
+print("PropertyGraphStore successfully verified:")
+print(f"- Triplet: ({triplets[0][0].name}) -[{triplets[0][1].label}]-> ({triplets[0][2].name})")
+
+# Keep canonical identity tenant-scoped. Preserve source provenance on every edge.
+rel.properties.update({'source_id': 'runbook-v1', 'tenant_id': 'platform'})
+graph_store.upsert_relations([rel])
+from llama_index.core import PropertyGraphIndex
+from llama_index.core.llms import MockLLM
+from llama_index.core.indices.property_graph import CustomPGRetriever
+class OwnerRetriever(CustomPGRetriever):
+    def init(self, **kwargs):
+        pass
+    def custom_retrieve(self, query_str):
+        triples = self.graph_store.get_triplets(entity_names=['Alice'])
+        return '\n'.join(f'{a.name} {r.label} {b.name}; source={r.properties.get("source_id")}'
+                         for a, r, b in triples)
+index = PropertyGraphIndex(nodes=[], property_graph_store=graph_store,
+    llm=MockLLM(max_tokens=16), embed_kg_nodes=False, kg_extractors=[])
+retriever = index.as_retriever(sub_retrievers=[OwnerRetriever(graph_store=graph_store)])
+hits = retriever.retrieve('Who maintains AuthService?')
+assert hits and 'AuthService' in hits[0].node.get_content()
+assert 'runbook-v1' in hits[0].node.get_content()
+print(hits[0].node.get_content())
+```
+
+### 架构说明与工程边界
+
+完成实体、边、来源属性、PropertyGraphIndex 与自定义图检索器连接；本例显式写入三元组，未实现开放域实体抽取。生产需要先做租户级实体消歧，在进入图遍历前限制可访问子图，并采用 SimpleLLMPathExtractor 或 SchemaLLMPathExtractor 抽取与校验。

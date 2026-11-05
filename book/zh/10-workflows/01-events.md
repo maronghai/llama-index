@@ -56,3 +56,66 @@ if __name__ == "__main__":
 ## 动手实验与验收
 
 运行最小工作流，再添加一条非法输入分支。验收：非法输入不进入检索，事件字段可验证。
+
+## 完整代码实现补充：基于 workflows 的纯事件驱动解耦 RAG 流水线
+
+Python 3.10+；`llama-index-core==0.14.25`。混合检索另需 `llama-index-retrievers-bm25==0.8.0`，SQL 依赖 SQLAlchemy，事件流依赖 `llama-index-workflows`（core 的依赖）。独立进程运行完整代码块；首次 tokenizer 初始化可能读取或下载缓存，请离线部署时预置 `TIKTOKEN_CACHE_DIR`。
+
+离线夹具只验证接口、来源和控制流，不验证语义质量或安全性。启用真实模型的分支需额外安装 `llama-index-llms-openai`、`llama-index-embeddings-openai`，重排分支另需 `llama-index-postprocessor-sbert-rerank`；设置 `RUN_REAL_MODELS=1`、`OPENAI_API_KEY`、`LLM_MODEL`、`EMBED_MODEL`（按示例需要）。这些外部模型分支本次未运行。
+
+```python
+import asyncio
+from workflows import Workflow, step
+from workflows.events import Event, StartEvent, StopEvent
+from llama_index.core import Document, VectorStoreIndex
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.llms import MockLLM
+from llama_index.core.response_synthesizers import get_response_synthesizer
+
+class QueryReady(Event):
+    query: str
+class EvidenceReady(Event):
+    query: str
+    nodes: list
+class RAGWorkflow(Workflow):
+    def __init__(self, retriever, **kwargs):
+        super().__init__(**kwargs)
+        self.retriever = retriever
+        self.synthesizer = get_response_synthesizer(llm=MockLLM(max_tokens=16))
+    @step
+    async def validate(self, ev: StartEvent) -> QueryReady:
+        query = str(ev.get('query', '')).strip()
+        if not query or len(query) > 500:
+            raise ValueError('Query must contain 1..500 characters')
+        return QueryReady(query=query)
+    @step
+    async def retrieve(self, ev: QueryReady) -> EvidenceReady:
+        nodes = await self.retriever.aretrieve(ev.query)
+        return EvidenceReady(query=ev.query, nodes=nodes)
+    @step
+    async def answer(self, ev: EvidenceReady) -> StopEvent:
+        if not ev.nodes:
+            return StopEvent(result={'status': 'no_evidence', 'sources': []})
+        response = await self.synthesizer.asynthesize(query=ev.query, nodes=ev.nodes)
+        return StopEvent(result={'status': 'ok', 'answer': str(response),
+            'sources': [n.node.ref_doc_id for n in response.source_nodes]})
+async def main():
+    index = VectorStoreIndex.from_documents([
+        Document(text='Vacation requests require manager approval.', id_='policy')],
+        embed_model=MockEmbedding(embed_dim=8))
+    flow = RAGWorkflow(index.as_retriever(similarity_top_k=1), timeout=10)
+    result = await flow.run(query='How do I request vacation?')
+    assert result['sources'] == ['policy']
+    class EmptyRetriever:
+        async def aretrieve(self, query):
+            return []
+    empty = await RAGWorkflow(EmptyRetriever(), timeout=10).run(query='Unknown policy?')
+    assert empty['status'] == 'no_evidence'
+    print(result, empty)
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+### 架构说明与工程边界
+
+工作流实际调用异步检索器与响应合成器，并验证空证据分支。输入校验只控制长度，不把删除关键词称为提示注入防御；事件解耦本身也不保证高并发性能，还要测量阻塞调用、资源上限和取消传播。

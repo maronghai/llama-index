@@ -54,3 +54,72 @@ Pitfall: interpreting 0.8 as 80% correctness. Calibrate decision thresholds on l
 用二维向量手算余弦，再比较归一化前后的点积排名。验收：能解释同方向不同长度向量为何余弦相同。
 
 Compute cosine on two-dimensional vectors and compare raw versus normalized dot products. Acceptance: explain equal cosine for vectors with the same direction but different magnitudes.
+
+## 完整代码实现补充 / Code Implementation Supplement:余弦数学相似度度量与 VectorStoreIndex 检索对齐 / Cosine Similarity Math Formulation Aligned with VectorStoreIndex
+
+Python 3.10+；`llama-index-core==0.14.25`。混合检索另需 `llama-index-retrievers-bm25==0.8.0`，SQL 依赖 SQLAlchemy，事件流依赖 `llama-index-workflows`（core 的依赖）。独立进程运行完整代码块；首次 tokenizer 初始化可能读取或下载缓存，请离线部署时预置 `TIKTOKEN_CACHE_DIR`。
+
+Python 3.10+; `llama-index-core==0.14.25`. Hybrid search additionally requires `llama-index-retrievers-bm25==0.8.0`; SQL uses SQLAlchemy; workflows uses the core dependency `llama-index-workflows`. Run the complete block in its own process. Tokenizer initialization may require a cache download; provision `TIKTOKEN_CACHE_DIR` for offline use.
+
+离线夹具只验证接口、来源和控制流，不验证语义质量或安全性。启用真实模型的分支需额外安装 `llama-index-llms-openai`、`llama-index-embeddings-openai`，重排分支另需 `llama-index-postprocessor-sbert-rerank`；设置 `RUN_REAL_MODELS=1`、`OPENAI_API_KEY`、`LLM_MODEL`、`EMBED_MODEL`（按示例需要）。这些外部模型分支本次未运行。
+
+Offline fixtures validate interfaces, provenance, and control flow, not semantic quality or security. Real-model branches additionally require `llama-index-llms-openai`, `llama-index-embeddings-openai`, and, for reranking, `llama-index-postprocessor-sbert-rerank`; set `RUN_REAL_MODELS=1`, `OPENAI_API_KEY`, `LLM_MODEL`, and `EMBED_MODEL` as required by the block. External-model branches have not been executed in this revision.
+
+```python
+import hashlib
+import math
+import re
+from llama_index.core.embeddings import MockEmbedding as _MockEmbedding
+
+class MockEmbedding(_MockEmbedding):
+    # Test-only hashed lexical vectors; NOT a semantic embedding model.
+    def _vector(self, text):
+        values = [0.0] * 256
+        for word in re.findall(r"[a-z0-9]+", text.lower()):
+            slot = int(hashlib.sha256(word.encode()).hexdigest()[:8], 16) % 256
+            values[slot] += 1.0
+        norm = math.sqrt(sum(v*v for v in values)) or 1.0
+        return [v / norm for v in values]
+    def _get_text_embedding(self, text):
+        return self._vector(text)
+    def _get_query_embedding(self, query):
+        return self._vector(query)
+    async def _aget_query_embedding(self, query):
+        return self._vector(query)
+
+import math
+from llama_index.core import Document, VectorStoreIndex
+
+def manual_cosine(v1: list, v2: list) -> float:
+    dot = sum(a * b for a, b in zip(v1, v2))
+    norm1 = math.sqrt(sum(a * a for a in v1))
+    norm2 = math.sqrt(sum(b * b for b in v2))
+    return dot / (norm1 * norm2) if norm1 and norm2 else 0.0
+
+embed_model = MockEmbedding(embed_dim=256)
+doc1 = Document(text="Deep learning neural network architectures", id_="doc_ai")
+doc2 = Document(text="Financial investment and asset management", id_="doc_finance")
+
+index = VectorStoreIndex.from_documents([doc1, doc2], embed_model=embed_model)
+retriever = index.as_retriever(similarity_top_k=2)
+candidates = retriever.retrieve("neural network models")
+
+assert len(candidates) == 2
+print("VectorStoreIndex retrieved nodes:")
+for c in candidates:
+    print(f"- Node: {c.node.ref_doc_id}, score: {getattr(c, 'score', 'N/A')}")
+
+query_vec = embed_model.get_query_embedding('neural network models')
+for hit in candidates:
+    node_vec = embed_model.get_text_embedding(hit.node.get_content())
+    expected = manual_cosine(query_vec, node_vec)
+    assert abs(hit.score - expected) < 1e-6
+assert candidates[0].node.ref_doc_id == 'doc_ai'
+assert manual_cosine([0,0], [1,0]) == 0
+```
+
+### 架构说明与工程边界 / Architecture and execution boundaries
+
+使用可复现的词项哈希向量，逐条核对框架检索分数与手算余弦，并测试零向量。该编码器仅用于算法验收，无法代表真实语义检索效果；换模型时必须重建全部向量。
+
+Reproducible hashed lexical vectors allow every framework score to be compared with manual cosine, including zero-vector handling. This test encoder does not measure semantic quality; changing the embedding model requires rebuilding vectors.

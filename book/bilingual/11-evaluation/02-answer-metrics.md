@@ -72,3 +72,60 @@ print({"good": good, "bad": bad})
 先人工标注原子事实及其证据，再运行确定性评分，适合作为裁判模型的校准集。此处引用支持采用严格规则：列出的每条引用均需支持该事实；不是自然语言蕴含判断，也不是 LlamaIndex FaithfulnessEvaluator 的替代。真实问答需记录裁判提示、模型、人工抽检与拒答题口径。
 
 Manually annotate atomic facts and evidence for deterministic scoring and judge calibration. Citation support uses a strict rule: every listed reference must support the claim. This is neither natural-language entailment nor a replacement for FaithfulnessEvaluator. Record judge prompts, models, audits and abstention policy.
+
+## 完整代码实现补充 / Code Implementation Supplement:忠实度 (Faithfulness) 与相关性 (Relevancy) 评估框架与回归门禁 / Faithfulness and Relevancy Evaluation Framework and Regression Quality Gates
+
+Python 3.10+；`llama-index-core==0.14.25`。混合检索另需 `llama-index-retrievers-bm25==0.8.0`，SQL 依赖 SQLAlchemy，事件流依赖 `llama-index-workflows`（core 的依赖）。独立进程运行完整代码块；首次 tokenizer 初始化可能读取或下载缓存，请离线部署时预置 `TIKTOKEN_CACHE_DIR`。
+
+Python 3.10+; `llama-index-core==0.14.25`. Hybrid search additionally requires `llama-index-retrievers-bm25==0.8.0`; SQL uses SQLAlchemy; workflows uses the core dependency `llama-index-workflows`. Run the complete block in its own process. Tokenizer initialization may require a cache download; provision `TIKTOKEN_CACHE_DIR` for offline use.
+
+离线夹具只验证接口、来源和控制流，不验证语义质量或安全性。启用真实模型的分支需额外安装 `llama-index-llms-openai`、`llama-index-embeddings-openai`，重排分支另需 `llama-index-postprocessor-sbert-rerank`；设置 `RUN_REAL_MODELS=1`、`OPENAI_API_KEY`、`LLM_MODEL`、`EMBED_MODEL`（按示例需要）。这些外部模型分支本次未运行。
+
+Offline fixtures validate interfaces, provenance, and control flow, not semantic quality or security. Real-model branches additionally require `llama-index-llms-openai`, `llama-index-embeddings-openai`, and, for reranking, `llama-index-postprocessor-sbert-rerank`; set `RUN_REAL_MODELS=1`, `OPENAI_API_KEY`, `LLM_MODEL`, and `EMBED_MODEL` as required by the block. External-model branches have not been executed in this revision.
+
+```python
+import asyncio
+import os
+from llama_index.core.evaluation import FaithfulnessEvaluator, RelevancyEvaluator
+from llama_index.core.llms import MockLLM
+from llama_index.core.base.llms.types import CompletionResponse
+
+class JudgeFixture(MockLLM):
+    # Controlled responses test evaluator plumbing only, not judgement quality.
+    verdict: str = 'YES'
+    def __init__(self, verdict='YES'):
+        super().__init__()
+        self.verdict = verdict
+    def complete(self, prompt, formatted=False, **kwargs):
+        return CompletionResponse(text=self.verdict)
+    async def acomplete(self, prompt, formatted=False, **kwargs):
+        return self.complete(prompt, formatted, **kwargs)
+async def evaluate(judge, answer):
+    args = dict(query='How many days of annual leave?', response=answer,
+        contexts=['Full-time employees receive 15 days of annual leave.'])
+    faith = await FaithfulnessEvaluator(llm=judge).aevaluate(**args)
+    relevant = await RelevancyEvaluator(llm=judge).aevaluate(**args)
+    return {'faith': faith, 'relevant': relevant}
+def gate(result):
+    return all(not r.invalid_result and r.passing is True for r in result.values())
+async def main():
+    good = await evaluate(JudgeFixture(verdict='YES'), '15 days.')
+    bad = await evaluate(JudgeFixture(verdict='NO'), 'Free flights for everyone.')
+    assert gate(good) and not gate(bad)
+    print({k: {'score': v.score, 'passing': v.passing, 'feedback': v.feedback}
+           for k, v in bad.items()})
+    if os.getenv('RUN_REAL_MODELS') == '1':
+        from llama_index.llms.openai import OpenAI
+        judge = OpenAI(model=os.environ['LLM_MODEL'], temperature=0, timeout=30)
+        for answer in ['15 days.', 'Free flights for everyone.']:
+            result = await evaluate(judge, answer)
+            print(answer, 'gate=', gate(result), result)
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+### 架构说明与工程边界 / Architecture and execution boundaries
+
+真正调用两个评估器，记录 score、passing、feedback，并验证通过及失败门禁。离线固定裁判只测试解析和控制流，不产生真实性评测结论；RUN_REAL_MODELS=1 使用真实裁判测试正负样例，还应与人工标注比较一致率，使用独立模型降低自评偏差。
+
+Actually calls both evaluators, records score, passing, and feedback, and tests accepting and rejecting gates. A fixed offline judge validates parsing and control flow only, not answer quality. RUN_REAL_MODELS=1 evaluates positive and negative cases with a real judge; compare against human labels and use an independent model to reduce self-evaluation bias.

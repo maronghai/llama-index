@@ -69,3 +69,47 @@ SummaryIndex 的默认检索返回所有节点，本例验证覆盖范围，不�
 Default SummaryIndex retrieval returns all nodes. This checks coverage, not summary accuracy. tree_summarize organizes hierarchical synthesis but cannot guarantee completeness or permission propagation. As the corpus grows, compare node counts, calls and input tokens against vector retrieval.
 
 首次运行 / First run：tokenizer 可能下载编码缓存。离线运行需预置缓存并设置 `TIKTOKEN_CACHE_DIR`。Tokenization may download an encoding cache; provision it before offline use.
+
+## 完整代码实现补充 / Code Implementation Supplement:SummaryIndex 针对全局总结问题的完整实现与验证 / SummaryIndex Full Implementation for Global Synthesis Queries
+
+Python 3.10+；`llama-index-core==0.14.25`。混合检索另需 `llama-index-retrievers-bm25==0.8.0`，SQL 依赖 SQLAlchemy，事件流依赖 `llama-index-workflows`（core 的依赖）。独立进程运行完整代码块；首次 tokenizer 初始化可能读取或下载缓存，请离线部署时预置 `TIKTOKEN_CACHE_DIR`。
+
+Python 3.10+; `llama-index-core==0.14.25`. Hybrid search additionally requires `llama-index-retrievers-bm25==0.8.0`; SQL uses SQLAlchemy; workflows uses the core dependency `llama-index-workflows`. Run the complete block in its own process. Tokenizer initialization may require a cache download; provision `TIKTOKEN_CACHE_DIR` for offline use.
+
+离线夹具只验证接口、来源和控制流，不验证语义质量或安全性。启用真实模型的分支需额外安装 `llama-index-llms-openai`、`llama-index-embeddings-openai`，重排分支另需 `llama-index-postprocessor-sbert-rerank`；设置 `RUN_REAL_MODELS=1`、`OPENAI_API_KEY`、`LLM_MODEL`、`EMBED_MODEL`（按示例需要）。这些外部模型分支本次未运行。
+
+Offline fixtures validate interfaces, provenance, and control flow, not semantic quality or security. Real-model branches additionally require `llama-index-llms-openai`, `llama-index-embeddings-openai`, and, for reranking, `llama-index-postprocessor-sbert-rerank`; set `RUN_REAL_MODELS=1`, `OPENAI_API_KEY`, `LLM_MODEL`, and `EMBED_MODEL` as required by the block. External-model branches have not been executed in this revision.
+
+```python
+from llama_index.core import Document, SummaryIndex
+from llama_index.core.llms import MockLLM
+from llama_index.core.response_synthesizers import ResponseMode
+
+llm = MockLLM(max_tokens=64)
+docs = [
+    Document(text="Chapter 1: Vision is high-availability enterprise cloud AI.", id_="ch_1"),
+    Document(text="Chapter 2: Security relies on zero trust and tenant isolation.", id_="ch_2"),
+    Document(text="Chapter 3: Compliance mandates automated audit logging.", id_="ch_3")
+]
+
+# SummaryIndex 不依赖向量计算，保存完整文档节点序列
+summary_index = SummaryIndex.from_documents(docs)
+retriever = summary_index.as_retriever()
+retrieved_nodes = retriever.retrieve("Provide an executive summary")
+assert len(retrieved_nodes) == 3
+
+query_engine = summary_index.as_query_engine(
+    llm=llm,
+    response_mode=ResponseMode.TREE_SUMMARIZE
+)
+resp = query_engine.query("Summarize all core principles across chapters")
+assert resp.source_nodes and len(resp.source_nodes) == 3
+
+print("SummaryIndex verified: scanned all 3 chapters without vector dropouts.")
+```
+
+### 架构说明与工程边界 / Architecture and execution boundaries
+
+无需向量模型介入，通过 SummaryIndex 保存全文档拓扑序列，结合树状合成器实现对跨节战略总纲的无死角全量扫描；模拟模型仅验证流程。
+
+Operates without vector embeddings by preserving document sequence in SummaryIndex, pairing with tree summarization for full-corpus traversal; the mock tests orchestration only.

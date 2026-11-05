@@ -85,3 +85,8 @@
 - [14.01 An enterprise knowledge base from requirements to acceptance](14-capstone-interview/01-capstone.md)
 - [14.02 Eight recurring failures and their remedies](14-capstone-interview/02-failure-cases.md)
 - [14.03 Priority map and interview communication](14-capstone-interview/03-interview-map.md)
+
+
+## Advanced implementation revision and validation
+
+Validation in this revision: 15 of the 17 new complete examples passed in isolated processes. The property-graph and answer-evaluation examples were subsequently corrected for the custom retriever init method and judge constructor; these edits have not been revalidated. Before those final corrections, 59 Chinese-edition Python blocks passed syntax parsing and the 17 new examples matched across all editions. Other legacy examples and real external-model branches were not executed.

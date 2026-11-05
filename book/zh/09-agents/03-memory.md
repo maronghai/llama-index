@@ -62,3 +62,54 @@ print(memory.read("a", "u1", "s1"))
 ### 实现说明、验收与项目边界
 
 这是内存存储适配层示例，不是对当前 LlamaIndex Memory API 的封装。接入聊天引擎前把 read 的结果转换为 ChatMessage。字符预算仅供演示，生产应使用模型 tokenizer，按完整对话轮裁剪，加 TTL、加密、并发控制和删除接口；摘要也继承租户与删除要求。
+
+## 完整代码实现补充：ChatMemoryBuffer 窗口 Token 限流与会话快照持久化
+
+Python 3.10+；`llama-index-core==0.14.25`。混合检索另需 `llama-index-retrievers-bm25==0.8.0`，SQL 依赖 SQLAlchemy，事件流依赖 `llama-index-workflows`（core 的依赖）。独立进程运行完整代码块；首次 tokenizer 初始化可能读取或下载缓存，请离线部署时预置 `TIKTOKEN_CACHE_DIR`。
+
+离线夹具只验证接口、来源和控制流，不验证语义质量或安全性。启用真实模型的分支需额外安装 `llama-index-llms-openai`、`llama-index-embeddings-openai`，重排分支另需 `llama-index-postprocessor-sbert-rerank`；设置 `RUN_REAL_MODELS=1`、`OPENAI_API_KEY`、`LLM_MODEL`、`EMBED_MODEL`（按示例需要）。这些外部模型分支本次未运行。
+
+```python
+from llama_index.core.memory import ChatMemoryBuffer
+from llama_index.core.base.llms.types import ChatMessage, MessageRole
+
+# 构造带严格 Token 预算的会话缓冲器
+memory = ChatMemoryBuffer.from_defaults(token_limit=120)
+
+# 写入多轮对话历史
+memory.put(ChatMessage(role=MessageRole.USER, content="Hello, I need to check my leave allowance."))
+memory.put(ChatMessage(role=MessageRole.ASSISTANT, content="You have 15 days of annual leave remaining."))
+memory.put(ChatMessage(role=MessageRole.USER, content="Can I carry over unused leave to next year?"))
+memory.put(ChatMessage(role=MessageRole.ASSISTANT, content="Yes, up to 5 days can be carried over."))
+
+history = memory.get()
+assert len(history) > 0
+
+# 提取稳定会话快照 (Portable Snapshot) 用于存储或跨服务传递
+snapshot = [{"role": msg.role.value, "content": msg.content} for msg in history]
+
+# 恢复至新的内存实例
+restored_memory = ChatMemoryBuffer.from_defaults(token_limit=120)
+for item in snapshot:
+    restored_memory.put(ChatMessage(role=MessageRole(item["role"]), content=item["content"]))
+
+assert len(restored_memory.get()) == len(history)
+print(f"ChatMemoryBuffer verified: {len(history)} messages preserved and restored.")
+
+# Force truncation using a predictable test tokenizer, not production token estimates.
+limited = ChatMemoryBuffer.from_defaults(token_limit=20, tokenizer_fn=lambda t: t.split())
+for i in range(8):
+    limited.put(ChatMessage(role=MessageRole.USER, content=f'Question {i} about annual leave'))
+    limited.put(ChatMessage(role=MessageRole.ASSISTANT, content=f'Answer {i} please check policy'))
+assert 0 < len(limited.get()) < len(limited.get_all())
+# Budgeting returns a window; it does not erase historical storage.
+assert len(limited.get_all()) == 16
+sessions = {('finance', 'alice', 'session1'): limited,
+            ('hr', 'alice', 'session1'): ChatMemoryBuffer.from_defaults(token_limit=20)}
+assert sessions[('hr', 'alice', 'session1')].get_all() == []
+print({'retained': len(limited.get()), 'stored': len(limited.get_all())})
+```
+
+### 架构说明与工程边界
+
+实际触发上下文窗口裁剪，并区分 get 与 get_all；快照仅覆盖纯文本角色和正文，不是多模态消息无损序列化。ChatMemoryBuffer 是兼容旧接口，新项目优先评估 Memory；服务端通过租户、用户、会话联合键隔离，历史库删除需另做。

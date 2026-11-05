@@ -79,3 +79,56 @@ con.close()
 模型只选择允许的指标 ID，服务端注入认证租户，再参数化执行。此方案比任意 Text-to-SQL 更受限，适合固定报表。若接入 NLSQLTableQueryEngine，应使用只读账号、库侧行权限、解析器与执行预算；字符串以 SELECT 开头不足以构成安全检查。
 
 The model selects an allowlisted metric ID; the server supplies the authenticated tenant and parameterized execution. This suits fixed reports. NLSQLTableQueryEngine requires read-only credentials, database row policies, SQL parsing and execution budgets. A SELECT prefix is not a security check.
+
+## 完整代码实现补充 / Code Implementation Supplement:NLSQLTableQueryEngine 关系数据库 Text-to-SQL 闭环 / NLSQLTableQueryEngine Text-to-SQL Relational Pipeline with SQL Verification
+
+Python 3.10+；`llama-index-core==0.14.25`。混合检索另需 `llama-index-retrievers-bm25==0.8.0`，SQL 依赖 SQLAlchemy，事件流依赖 `llama-index-workflows`（core 的依赖）。独立进程运行完整代码块；首次 tokenizer 初始化可能读取或下载缓存，请离线部署时预置 `TIKTOKEN_CACHE_DIR`。
+
+Python 3.10+; `llama-index-core==0.14.25`. Hybrid search additionally requires `llama-index-retrievers-bm25==0.8.0`; SQL uses SQLAlchemy; workflows uses the core dependency `llama-index-workflows`. Run the complete block in its own process. Tokenizer initialization may require a cache download; provision `TIKTOKEN_CACHE_DIR` for offline use.
+
+离线夹具只验证接口、来源和控制流，不验证语义质量或安全性。启用真实模型的分支需额外安装 `llama-index-llms-openai`、`llama-index-embeddings-openai`，重排分支另需 `llama-index-postprocessor-sbert-rerank`；设置 `RUN_REAL_MODELS=1`、`OPENAI_API_KEY`、`LLM_MODEL`、`EMBED_MODEL`（按示例需要）。这些外部模型分支本次未运行。
+
+Offline fixtures validate interfaces, provenance, and control flow, not semantic quality or security. Real-model branches additionally require `llama-index-llms-openai`, `llama-index-embeddings-openai`, and, for reranking, `llama-index-postprocessor-sbert-rerank`; set `RUN_REAL_MODELS=1`, `OPENAI_API_KEY`, `LLM_MODEL`, and `EMBED_MODEL` as required by the block. External-model branches have not been executed in this revision.
+
+```python
+from sqlalchemy import create_engine, text, event
+from llama_index.core import SQLDatabase
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.llms import MockLLM
+from llama_index.core.base.llms.types import CompletionResponse
+from llama_index.core.query_engine import NLSQLTableQueryEngine
+
+engine = create_engine('sqlite:///:memory:')
+with engine.begin() as conn:
+    conn.execute(text('CREATE TABLE employees (id INTEGER, department TEXT, days INTEGER)'))
+    conn.execute(text('INSERT INTO employees VALUES (1, :d, 15), (2, :e, 8)'),
+                 {'d': 'Finance', 'e': 'Engineering'})
+# This toy database has no private tables. Production uses read-only DB credentials and RLS.
+@event.listens_for(engine, 'checkout')
+def read_only(dbapi_connection, connection_record, connection_proxy):
+    dbapi_connection.execute('PRAGMA query_only=ON')
+class FixtureSQLModel(MockLLM):
+    def complete(self, prompt, formatted=False, **kwargs):
+        return CompletionResponse(text='SELECT SUM(days) AS total FROM employees')
+db = SQLDatabase(engine, include_tables=['employees'])
+query_engine = NLSQLTableQueryEngine(sql_database=db, tables=['employees'],
+    llm=FixtureSQLModel(), embed_model=MockEmbedding(embed_dim=8),
+    synthesize_response=False, handle_sql_errors=False)
+response = query_engine.query('How many vacation days remain in total?')
+assert 'SUM' in response.metadata['sql_query'].upper()
+assert '23' in str(response)
+try:
+    with engine.begin() as conn:
+        conn.execute(text('DELETE FROM employees'))
+except Exception:
+    print('Write rejected by database query_only mode.')
+else:
+    raise AssertionError('Database unexpectedly allowed a write')
+print({'sql': response.metadata['sql_query'], 'result': str(response)})
+```
+
+### 架构说明与工程边界 / Architecture and execution boundaries
+
+实际执行 Text-to-SQL→数据库→结果断言，使用固定 SQL 输出模型验证编排，不代表自然语言生成 SQL 的能力。include_tables 仅限制模型看到的 schema，不是数据库权限；示例用 SQLite query_only 拦截写入，生产使用只读账号、查询超时、行数限制与数据库行级权限。
+
+Executes Text-to-SQL through the database and validates the result. A fixed-output SQL model tests orchestration, not natural-language SQL generation. include_tables restricts schema context rather than database permissions. SQLite query_only blocks writes here; use read-only credentials, query timeouts, result limits, and row-level security in production.

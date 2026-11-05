@@ -64,3 +64,65 @@ print(result)
 ### Implementation, acceptance and production boundaries
 
 This reference traversal is not a PropertyGraphIndex integration test. Entities use namespaced stable IDs and edges carry evidence and tenant ownership. Validate extracted triples, entity resolution and relation types before writing graph storage. Production traversal also needs edge, time and high-degree limits.
+
+## Code Implementation Supplement:SimplePropertyGraphStore Entity and Relation Topology Construction
+
+Python 3.10+; `llama-index-core==0.14.25`. Hybrid search additionally requires `llama-index-retrievers-bm25==0.8.0`; SQL uses SQLAlchemy; workflows uses the core dependency `llama-index-workflows`. Run the complete block in its own process. Tokenizer initialization may require a cache download; provision `TIKTOKEN_CACHE_DIR` for offline use.
+
+Offline fixtures validate interfaces, provenance, and control flow, not semantic quality or security. Real-model branches additionally require `llama-index-llms-openai`, `llama-index-embeddings-openai`, and, for reranking, `llama-index-postprocessor-sbert-rerank`; set `RUN_REAL_MODELS=1`, `OPENAI_API_KEY`, `LLM_MODEL`, and `EMBED_MODEL` as required by the block. External-model branches have not been executed in this revision.
+
+```python
+from llama_index.core.graph_stores.simple_labelled import SimplePropertyGraphStore
+from llama_index.core.graph_stores.types import EntityNode, Relation
+
+graph_store = SimplePropertyGraphStore()
+
+# 1. 显式创建实体节点 (EntityNode)
+e1 = EntityNode(name="Alice", label="ENGINEER", properties={"team": "Core Platform"})
+e2 = EntityNode(name="AuthService", label="MICROSERVICE", properties={"tier": "P0"})
+graph_store.upsert_nodes([e1, e2])
+
+# 2. 显式建立带属性的关系边 (Relation)
+rel = Relation(
+    source_id=e1.id,
+    target_id=e2.id,
+    label="MAINTAINS",
+    properties={"oncall": True, "since": "2023"}
+)
+graph_store.upsert_relations([rel])
+
+# 3. 验证关系检索与图谱拓扑
+triplets = graph_store.get_triplets(entity_names=[e1.id])
+assert len(triplets) == 1
+assert triplets[0][0].name == "Alice"
+assert triplets[0][1].label == "MAINTAINS"
+assert triplets[0][2].name == "AuthService"
+
+print("PropertyGraphStore successfully verified:")
+print(f"- Triplet: ({triplets[0][0].name}) -[{triplets[0][1].label}]-> ({triplets[0][2].name})")
+
+# Keep canonical identity tenant-scoped. Preserve source provenance on every edge.
+rel.properties.update({'source_id': 'runbook-v1', 'tenant_id': 'platform'})
+graph_store.upsert_relations([rel])
+from llama_index.core import PropertyGraphIndex
+from llama_index.core.llms import MockLLM
+from llama_index.core.indices.property_graph import CustomPGRetriever
+class OwnerRetriever(CustomPGRetriever):
+    def init(self, **kwargs):
+        pass
+    def custom_retrieve(self, query_str):
+        triples = self.graph_store.get_triplets(entity_names=['Alice'])
+        return '\n'.join(f'{a.name} {r.label} {b.name}; source={r.properties.get("source_id")}'
+                         for a, r, b in triples)
+index = PropertyGraphIndex(nodes=[], property_graph_store=graph_store,
+    llm=MockLLM(max_tokens=16), embed_kg_nodes=False, kg_extractors=[])
+retriever = index.as_retriever(sub_retrievers=[OwnerRetriever(graph_store=graph_store)])
+hits = retriever.retrieve('Who maintains AuthService?')
+assert hits and 'AuthService' in hits[0].node.get_content()
+assert 'runbook-v1' in hits[0].node.get_content()
+print(hits[0].node.get_content())
+```
+
+### Architecture and execution boundaries
+
+Connects entities, provenance-bearing relations, PropertyGraphIndex, and a custom graph retriever. Triples are explicitly supplied, not extracted from open-ended text. Production requires tenant-scoped canonical entities, authorized subgraphs, and validated extraction via SimpleLLMPathExtractor or SchemaLLMPathExtractor.
