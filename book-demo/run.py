@@ -9,8 +9,9 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['serve', 'demo', 'evaluate', 'backup'])
+    parser.add_argument('command', choices=['serve', 'demo', 'evaluate', 'backup', 'worker'])
     parser.add_argument('--output')
+    parser.add_argument('--once', action='store_true', help='Process at most one ready job')
     args = parser.parse_args()
     if args.command == 'serve':
         import uvicorn
@@ -18,6 +19,13 @@ def main():
         uvicorn.run('kb.api:create_app', factory=True,
                     host=os.getenv('KB_BIND', '127.0.0.1'),
                     port=int(os.getenv('KB_PORT', '8000')), workers=1)
+    elif args.command == 'worker':
+        from kb.config import Config
+        from kb.worker import run_worker
+        cfg = Config.from_env()
+        cfg.validate()
+        logging.basicConfig(level=logging.INFO, format='%(message)s')
+        run_worker(cfg, once=args.once)
     elif args.command == 'backup':
         if not args.output:
             parser.error('backup requires --output')

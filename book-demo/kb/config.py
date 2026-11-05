@@ -24,6 +24,9 @@ class Config:
     rate_limit: int = 120
     max_chunks: int = 5000
     timeout: float = 25.0
+    max_pending_jobs: int = 100
+    job_max_attempts: int = 3
+    job_lease_seconds: int = 300
 
     @classmethod
     def from_env(cls):
@@ -34,7 +37,12 @@ class Config:
                    embedding_model=os.getenv('KB_EMBEDDING_MODEL', ''),
                    chat_model=os.getenv('KB_CHAT_MODEL', ''),
                    dimension=int(os.getenv('KB_EMBEDDING_DIM', '256')),
-                   rate_limit=int(os.getenv('KB_RATE_LIMIT', '120')))
+                   rate_limit=int(os.getenv('KB_RATE_LIMIT', '120')),
+                   max_chunks=int(os.getenv('KB_MAX_CHUNKS', '5000')),
+                   timeout=float(os.getenv('KB_MODEL_TIMEOUT', '25')),
+                   max_pending_jobs=int(os.getenv('KB_MAX_PENDING_JOBS', '100')),
+                   job_max_attempts=int(os.getenv('KB_JOB_MAX_ATTEMPTS', '3')),
+                   job_lease_seconds=int(os.getenv('KB_JOB_LEASE_SECONDS', '300')))
 
     def validate(self):
         if self.mode not in ('offline', 'remote'):
@@ -50,6 +58,9 @@ class Config:
                 raise ValueError('Invalid tenant')
         if not 32 <= self.dimension <= 8192 or self.rate_limit < 1:
             raise ValueError('Invalid dimension or rate limit')
+        import math
+        if not math.isfinite(self.timeout) or self.timeout <= 0 or self.max_chunks < 1 or self.max_pending_jobs < 1 or self.job_max_attempts < 1 or self.job_lease_seconds < 1:
+            raise ValueError('Invalid capacity, timeout or job limits')
         if self.mode == 'remote':
             if not self.api_base.startswith('https://'):
                 raise ValueError('Remote model endpoint must use HTTPS')

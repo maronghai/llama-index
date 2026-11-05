@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from uuid import uuid4
-from fastapi import FastAPI, Depends, Request, HTTPException
+from fastapi import FastAPI, Depends, Request, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ConfigDict
 from .config import Config, Principal
@@ -30,6 +30,14 @@ class DeleteInput(StrictModel):
     expected_version: int = Field(ge=1)
 
 
+class JobSubmitInput(StrictModel):
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    doc_id: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1, max_length=200000)
+    expected_version: int = Field(default=0, ge=0)
+
+
 def create_app(config=None):
     config = config or Config.from_env()
     config.validate()
@@ -49,7 +57,7 @@ def create_app(config=None):
             async for part in request.stream():
                 body.extend(part)
                 if len(body) > 900000:
-                    return JSONResponse({'detail': 'Request too large'}, status_code=413)
+                    return JSONResponse({'detail': 'Request too large'}, status_code=413, headers={'X-Request-ID': request.state.request_id, 'Cache-Control': 'no-store'})
             request._body = bytes(body)
         try:
             response = await call_next(request)
@@ -105,9 +113,55 @@ def create_app(config=None):
             db.execute('SELECT 1').fetchone()
         return {'status': 'ok', 'mode': config.mode}
 
+
     @app.get('/v1/documents')
-    def documents(p=Depends(identity)):
-        return {'documents': store.list_docs(p)}
+    def documents(limit: int = 100, after: str = '', p=Depends(identity)):
+        if limit < 1 or limit > 500:
+            raise HTTPException(422, 'limit must be between 1 and 500')
+        docs = store.list_docs(p, limit=limit, after=after)
+        next_after = docs[-1]['id'] if len(docs) == limit else None
+        return {'documents': docs, 'next_after': next_after}
+
+    @app.get('/v1/documents/{doc_id}')
+    def document(doc_id: str, p=Depends(identity)):
+        doc = store.get_doc(p, doc_id)
+        if not doc:
+            raise HTTPException(404, 'Document not found')
+        return doc
+
+    @app.post('/v1/jobs/ingest')
+    def submit_ingest_job(body: JobSubmitInput, request: Request, p=Depends(writer)):
+        if not body.doc_id.strip() or not body.text.strip():
+            raise HTTPException(422, 'Invalid document ID or blank text')
+        payload = {
+            'doc_id': body.doc_id,
+            'title': body.title,
+            'text': body.text,
+            'expected_version': body.expected_version,
+        }
+        job = store.submit_job(p, body.idempotency_key, payload, request.state.request_id)
+        return JSONResponse(job, status_code=202)
+
+    @app.get('/v1/jobs/{job_id}')
+    def get_job(job_id: str, p=Depends(identity)):
+        job = store.get_job(p, job_id)
+        if not job:
+            raise HTTPException(404, 'Job not found')
+        return job
+
+    @app.post('/v1/jobs/{job_id}/cancel')
+    def cancel_job(job_id: str, request: Request, p=Depends(writer)):
+        res = store.cancel_job(p, job_id, request.state.request_id)
+        if not res:
+            raise HTTPException(404, 'Job not found')
+        return res
+
+    @app.get('/v1/metrics')
+    def metrics(p=Depends(identity)):
+        if p.role != 'admin':
+            raise HTTPException(403, 'Administrator permission required')
+        return store.metrics(p)
+
 
     @app.put('/v1/documents/{doc_id}')
     def ingest(doc_id: str, body: DocumentInput, request: Request, p=Depends(writer)):
@@ -130,9 +184,10 @@ def create_app(config=None):
         return query(config, store, embeddings, p, body.question, body.top_k, request.state.request_id)
 
     @app.get('/v1/audit')
-    def audit(p=Depends(identity)):
+    def audit(limit: int = Query(100, ge=1, le=500), before: int = Query(9223372036854775807, ge=1), p=Depends(identity)):
         if p.role != 'admin':
             raise HTTPException(403, 'Administrator permission required')
-        return {'events': store.audit(p)}
+        events = store.audit(p, limit, before)
+        return {'events': events, 'next_before': events[-1]['id'] if len(events) == limit else None}
 
     return app

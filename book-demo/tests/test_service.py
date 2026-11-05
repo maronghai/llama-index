@@ -265,7 +265,8 @@ def test_contract_and_backup_restore():
         with TestClient(create_app(cfg)) as client:
             client.put('/v1/documents/backup', headers={'Authorization': 'Bearer '+writer},
                        json={'title': 'backup', 'text': 'persistent backup policy'}).raise_for_status()
-            subprocess.run([sys.executable, 'run.py', 'backup', '--output', str(target)],
+            run_py = Path(__file__).resolve().parent.parent / 'run.py'
+            subprocess.run([sys.executable, str(run_py), 'backup', '--output', str(target)],
                            env={**os.environ, 'KB_DB': str(source)}, check=True, timeout=20)
         from contextlib import closing
         with closing(sqlite3.connect(target)) as db:

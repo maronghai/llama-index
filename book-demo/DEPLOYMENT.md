@@ -37,7 +37,9 @@ $env:KB_DB = 'data/knowledge.db'
 | `kb/retrieval.py` | TextNode、VectorStoreIndex、BM25、RRF、带引用回答 |
 | `kb/api.py` | FastAPI、鉴权、角色边界、输入限制、请求追踪与错误映射 |
 | `demo.py` | 无外部依赖服务的端到端验收场景 |
-| `run.py` | demo / evaluate / serve / backup 命令 |
+| `run.py` | demo / evaluate / serve / backup / worker 命令 |
+| `kb/worker.py` | 持久化摄取任务、租约续期、重试和退出信号 |
+| `tests/test_jobs.py` | 幂等、恢复、取消、并发认领、配额、版本和分页测试 |
 | `tests/test_service.py` | 权限、隔离、并发、删除、故障、重启与恢复测试 |
 | `Dockerfile` | 非 root 容器入口、健康探针 |
 | `install.py` | 固定已验证的直接依赖版本 |
@@ -54,11 +56,11 @@ $env:KB_DB = 'data/knowledge.db'
 |---|---|---|
 | GET | `/health/live` | 存活探针，不鉴权 |
 | GET | `/health/ready` | SQLite 连通性，不鉴权；不探测外部模型 |
-| GET | `/v1/documents` | 当前租户文档元信息，不返回全文 |
+| GET | `/v1/documents` | 当前租户文档元信息，limit/after 游标分页，不返回全文 |
 | PUT | `/v1/documents/{id}` | title、text、expected_version；新建版本为0，更新必须传现有版本 |
 | DELETE | `/v1/documents/{id}` | JSON expected_version；提交后新查询不再命中文档 |
 | POST | `/v1/query` | question、top_k（1至10）；返回 answer、refused、citations、request_id |
-| GET | `/v1/audit` | 当前租户最近100条审计，仅admin |
+| GET | `/v1/audit` | 当前租户审计，limit/before 游标分页，仅admin |
 
 服务默认关闭交互式接口文档，接口以此表与源码输入模型为准。所有 SQL 参数绑定；id 是数据库键，不作为文件路径。正文大小上限900000字节，文档最多200000字符，问题最多2000字符，租户默认最多5000个切块。
 
@@ -73,7 +75,7 @@ $q = @{ question='差旅酒店报销上限是多少？'; top_k=4 } | ConvertTo-J
 Invoke-RestMethod "$base/v1/query" -Method Post -Headers $headers -Body ([Text.Encoding]::UTF8.GetBytes($q)) -ContentType 'application/json'
 ```
 
-版本号从写入响应和文档列表中获取。更新传1得到2；过期写入或删除返回409。相同内容重试应带当前版本；本接口没有独立 Idempotency-Key，不保证客户端超时后盲目重放得到相同响应。使用固定文档id并查询版本进行对账。
+版本号从写入响应和文档列表中获取。更新传1得到2；过期写入或删除返回409。相同内容重试应带当前版本；同步接口没有独立 Idempotency-Key，不保证客户端超时后盲目重放得到相同响应。需要可靠重试时使用异步摄取接口的 idempotency_key；同步接口使用固定文档id并查询版本进行对账。删除后重建仍传 expected_version=0，但返回版本从历史最大值继续递增。
 
 错误约定：401无凭证、403权限不足、404文档不存在、409版本或证据变化、413正文或租户容量超限、422输入不合约、429频次限制、503模型不可用、500其他故障。错误响应不返回密钥、文档或模型服务内部错误。
 
@@ -92,7 +94,7 @@ $env:KB_DB = 'data/remote-knowledge.db'
 .\.venv\Scripts\python.exe run.py serve
 ```
 
-每次模型请求明确设置超时25秒，禁用重定向。外部模型故障返回503，不伪造成功、不静默降级到离线模型。为避免超时重试放大成本，当前只进行一次模型调用；客户端可对503做带抖动、有预算的重试。摄取是同步小文档处理，尚未提供后台队列或断点续传。远程 HTTP 合约在自动化测试中使用模拟响应验证，没有使用真实模型账号做实测。
+每次模型请求明确设置超时25秒，禁用重定向。外部模型故障返回503，不伪造成功、不静默降级到离线模型。为避免超时重试放大成本，当前只进行一次模型调用；客户端可对503做带抖动、有预算的重试。除同步接口外，现已提供持久化异步摄取队列；不提供大文件分片上传或断点续传。远程 HTTP 合约在自动化测试中使用模拟响应验证，没有使用真实模型账号做实测。
 
 更换嵌入模型、维度、网关、模式或切块契约必须重建数据库并重新摄取。启动时契约不一致会直接拒绝，避免新旧向量混用。保留旧数据库，验收新库后切换配置，回滚时切回原库。固定维度、模型名称并不能阻止供应商暗中更新模型，生产应使用供应商的不可变模型版本。
 
@@ -107,7 +109,7 @@ docker run --rm --name book-kb --env-file /secure/kb.env --mount type=volume,sou
 
 当前交付的持久向量库是SQLite，并在每次查询时只对当前租户的切块构建内存VectorStoreIndex。文本和向量同事务，删除传播简单；代价是查询复杂度随租户切块量增加。不要将其宣称为百万级向量服务。5000切块是保护性上限，实际QPS、延迟和内存容量必须用自己的文档及模型压测。
 
-本版本运行单进程、单副本，SQLite数据必须在本机可靠磁盘，不放网络共享盘。数据库限流按密钥和固定分钟窗口计数，多个密钥可叠加额度，不等于计费配额或全局租户限流。服务入口前放TLS终止、连接数限制、超时、访问控制和请求体限制；运行进程使用专用系统账号和最小文件权限。当前未实现SSO、文档级ACL、共享知识库、会话记忆、Agent工具执行、图检索或SQL生成，这些属于后续独立功能，不冒充已实现。
+API默认单进程、单副本，另起本机worker进程；任务允许多个本机worker互斥认领。SQLite数据必须在本机可靠磁盘，不放网络共享盘。数据库限流按密钥和固定分钟窗口计数，多个密钥可叠加额度，不等于计费配额或全局租户限流。服务入口前放TLS终止、连接数限制、超时、访问控制和请求体限制；运行进程使用专用系统账号和最小文件权限。当前未实现SSO、文档级ACL、共享知识库、会话记忆、Agent工具执行、图检索或SQL生成，这些属于后续独立功能，不冒充已实现。
 
 生产迁移到外部向量数据库时，必须保留租户过滤下推、证据二次授权、更新/删除对账；SQLite与外部向量存储不再能用同一事务，应增加outbox事件与幂等工作者。
 
@@ -129,7 +131,7 @@ SQLite没有内置加密，需依赖磁盘与备份加密、目录权限及主�
 .\.venv\Scripts\python.exe run.py backup --output 'backups/knowledge-20261105.db'
 ```
 
-备份目标必须不存在。恢复时停止服务，把KB_DB指向备份副本，使用同样的索引契约启动；验证授权隔离、文档版本和抽样引用后恢复入口。不同版本数据库结构目前没有自动迁移器，发布前先在副本验证，数据库模式变化需编写并审核迁移。
+备份目标必须不存在。恢复时停止服务，把KB_DB指向备份副本，使用同样的索引契约启动；验证授权隔离、文档版本和抽样引用后恢复入口。本次启动会以幂等建表方式新增任务表、版本墓碑表和索引，回填当前文档版本并记录 user_version=2；旧文档和索引契约保留。历史已删除文档无法回溯墓碑。发布前停止旧worker并备份，在数据库副本验证后切换；这不是通用迁移/降级框架。
 
 | 现象 | 优先检查与处置 |
 |---|---|
@@ -154,3 +156,74 @@ SQLite没有内置加密，需依赖磁盘与备份加密、目录权限及主�
 - 面试：如何把此项目迁移到高可用？先建立容量基线，再拆摄取任务队列、迁移关系库与向量存储、引入事件对账，不能仅增加容器副本。
 - 项目坑：离线哈希embedding不是语义模型；字符窗口不是token预算；远程embedding和生成成本应独立计量；当前没有成本计费与答案缓存。
 - 上线验收：用本企业标注集评估Recall@k、MRR、拒答和答案支持度，补齐负载、故障注入、安全审计与恢复演练。本项目demo评估只有3项确定性验收，不替代真实质量评测。
+
+
+## 9. 持久化异步摄取与运维（本次新增）
+
+### 启动与调用
+
+API与worker使用相同的模型、索引契约、KB_DB和身份环境；二者在同一台机器访问本机数据库。worker不随API启动，避免每个Web副本意外重复启动消费线程。
+
+```powershell
+# 终端一（先注入第1节所需环境）
+python run.py serve
+# 终端二（注入相同环境）
+python run.py worker
+# 运维或批处理：最多处理一个当前可认领任务，没有任务即退出
+python run.py worker --once
+```
+
+```powershell
+$headers = @{ Authorization = "Bearer $env:KB_CLIENT_KEY" }
+$base = $env:KB_SERVICE_URL
+$body = @{
+    idempotency_key = 'travel-policy-change-20261105-01'
+    doc_id = 'travel'
+    title = '差旅制度'
+    text = '差旅酒店报销上限为每晚600元。'
+    expected_version = 0
+} | ConvertTo-Json
+$job = Invoke-RestMethod "$base/v1/jobs/ingest" -Method Post -Headers $headers -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json'
+Invoke-RestMethod "$base/v1/jobs/$($job.id)" -Headers $headers
+# 需要取消时（已成功或失败的任务不能取消）
+# Invoke-RestMethod "$base/v1/jobs/$($job.id)/cancel" -Method Post -Headers $headers
+```
+
+| 接口 | 行为 |
+|---|---|
+| POST `/v1/jobs/ingest` | writer/admin提交；202表示已持久化接受，不表示入库成功 |
+| GET `/v1/jobs/{id}` | 当前租户读取状态、尝试次数、安全错误码和最终结果；不返回正文 |
+| POST `/v1/jobs/{id}/cancel` | writer/admin取消queued/running任务；旧worker随后无法提交 |
+| GET `/v1/documents/{id}` | 当前租户读取文档全文、版本；其他租户返回404 |
+| GET `/v1/documents?limit=100&after=...` | 以文档ID升序游标分页，最多500条 |
+| GET `/v1/audit?limit=100&before=...` | admin按审计ID倒序分页，最多500条 |
+| GET `/v1/metrics` | admin读取当前租户文档数、切块数、各状态任务数 |
+
+当页数恰好等于limit时可能返回游标，但下一页为空。列表跨多个请求不承诺快照一致性。详情接口延续租户授权，不提供文档级ACL。
+
+### 状态机与一致性
+
+任务路径：queued → running → succeeded；模型或存储暂时失败时重新queued，超过次数后failed；版本冲突或容量不足直接failed；queued/running可转cancelled。
+
+- 幂等范围为租户+提交密钥摘要+idempotency_key。同键同参数返回原任务，同键不同参数409；轮换密钥后范围改变。终态重复提交不会自动重跑，业务决定重试时需新的幂等键和正确版本。
+- BEGIN IMMEDIATE事务认领任务，单次只有一个worker得到有效租约；租约带随机token。续期每租约时长的1/3执行，向量调用不占数据库写事务。
+- 崩溃后到期任务可重新认领，尝试次数递增；旧token失效。最终文档、切块、审计和succeeded状态在同一事务提交，避免文档已写但任务仍待处理。任务计算采用至少一次语义，外部模型调用可能重复计费。
+- 取消先提交则旧worker无法入库；写入先提交则取消409。取消不能撤回已经发出的模型请求，正文在终态从任务payload清除，但数据库空闲页和备份不保证物理擦除。
+- 失败重试等待min(60,2^attempts)秒，默认最多3次；不在Web请求中阻塞等待结果。所有worker停止后任务只保存在队列，不会自行处理。
+- SIGINT/SIGTERM使worker完成当前任务后退出；部署终止宽限期应覆盖当前任务处理时间。强制终止后靠租约恢复。长时间停机应监测queued数量和最老任务时间，指标接口目前仅提供状态数量。
+
+| 环境变量 | 默认值 | 用途 |
+|---|---|---|
+| KB_MAX_PENDING_JOBS | 100 | 每租户queued+running的背压上限 |
+| KB_JOB_MAX_ATTEMPTS | 3 | 首次执行计入最大尝试次数 |
+| KB_JOB_LEASE_SECONDS | 300 | 租约与崩溃恢复等待时间 |
+| KB_MAX_CHUNKS | 5000 | 当前租户切块容量上限 |
+| KB_MODEL_TIMEOUT | 25 | 单次远程请求超时秒数 |
+
+任务终态保留用于幂等对账，不自动删除幂等记录；实际部署需制定任务元信息保留策略并评估磁盘增长。当前指标是租户授权JSON计数，不是Prometheus时序指标、延迟直方图或完整OpenTelemetry追踪。没有部署高可用调度器、SSO、外部向量库、文件解析、管理界面或分布式限流；这些能力不作为本次交付的已实现项。
+
+### 版本防护与验收
+
+旧实现删除文档后重建会重复使用版本1，导致旧证据可能误通过版本检查。本次document_versions保留每个文档历史最大版本，删除不清除墓碑；重建继续递增，旧引用与旧更新请求会冲突。历史已删除文档没有可恢复记录，因此升级前已有的在途请求应随旧服务一同排空。
+
+当前18项自动化测试通过：包括8项新增任务/分页/版本测试及10项原有隔离、模型故障、并发和备份恢复测试。租约续期测试验证数据库续期与旧token拒绝，不声称完成长时间压力或真实进程强杀演练。远程模型仍使用模拟合约，Docker镜像、真实模型成本和现场吞吐未实测。运行测试不要求固定工作目录，备份测试使用绝对脚本定位。
