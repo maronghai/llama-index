@@ -1,0 +1,39 @@
+# 分范围许可 / Licensing scope
+
+本仓库采用分范围授权，不对所有内容统一授予 MIT 许可。
+
+- 本项目原创软件代码（包括 book-demo、脚本、测试和书稿中的代码示例）采用下附 MIT License。软件运行、安装和部署说明亦适用 MIT，但不包括书稿叙述性内容。
+- book 中的书稿正文、译文、图表、章节组织及其他非代码内容保留版权，详见 book/LICENSE。docs、html 中的非代码资料不因代码采用 MIT 而获得转载或再许可授权。
+- 既有第三方内容、依赖、商标及引用材料仍遵循其原有许可或权利，不在本项目许可的重新授权范围内。使用者须另行遵守相应条款。
+- 版权归各内容的实际权利人所有；本许可不主张拥有第三方权利，也不表示获得 LlamaIndex 官方认可。
+
+Original software code, including book-demo, scripts, tests and code examples
+in the book, and software operation/installation/deployment documentation are
+licensed under the MIT License below. The book's prose, translations, figures
+and other non-code content are NOT MIT-licensed; see book/LICENSE. Non-code
+reference materials in docs and html are not licensed for redistribution by
+this grant. Third-party materials remain subject to their original terms.
+
+---
+
+MIT License
+
+Copyright (c) 2026 the respective project contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

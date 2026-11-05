@@ -1,0 +1,54 @@
+# 书稿版权声明 / Book copyright notice
+
+Copyright (c) 2026 the respective copyright holders. All rights reserved.
+版权所有 © 2026 各内容的实际权利人。保留所有权利。
+
+## 适用范围
+
+本声明适用于本目录内中文版、英文版、中英对照版书稿的正文、译文、
+图表、章节组织及其他非代码内容，也适用于它们的导出及打包版本。
+书稿中的本项目原创代码示例另按下附 MIT License 授权。
+第三方引用、代码、图片和其他材料仍遵循原权利人的许可或适用法律。
+
+## 使用与授权
+
+除适用法律允许的合理使用等情形，或另有明确书面许可外，未经相关权利人
+书面授权，不得复制、转载、传播、出版、销售、翻译、改编或向公众提供
+本书稿的全部或实质性部分。公开访问仓库不等于获得上述授权。
+内部培训如需复制或分发书稿，同样应取得授权，除非适用法律另有规定。
+
+申请书稿授权时，请向相关权利人取得明确书面许可。
+
+## English notice
+
+All non-code book content in the Chinese, English and bilingual editions,
+including prose, translations, figures and chapter organization, is reserved.
+Except as permitted by applicable law or separate written permission, no
+license is granted to reproduce, redistribute, publish, sell, translate,
+adapt or make substantial portions available to the public. Public repository
+access does not itself grant these rights. Original code examples are instead
+licensed under the MIT License below. Third-party material retains its own terms.
+
+## 本项目原创代码示例 / Original code examples
+
+MIT License
+
+Copyright (c) 2026 the respective project contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
