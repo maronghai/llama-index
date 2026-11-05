@@ -8,7 +8,7 @@ from fastapi import FastAPI, Depends, Request, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ConfigDict
 from .config import Config, Principal
-from .models import Embeddings, ModelFailure
+from .models import Embeddings, ModelFailure, embed_parts
 from .store import Store, Conflict, Capacity, Limited
 from .retrieval import chunk, query
 
@@ -168,7 +168,7 @@ def create_app(config=None):
         if len(doc_id) > 128 or not doc_id.strip() or not body.text.strip():
             raise HTTPException(422, 'Invalid document ID or blank text')
         parts = chunk(body.text)
-        vectors = [(part, embeddings.get_text_embedding(part)) for part in parts]
+        vectors = embed_parts(embeddings, parts)
         return store.upsert(p, doc_id, body.title, body.text, body.expected_version, vectors, request.state.request_id)
 
     @app.delete('/v1/documents/{doc_id}')

@@ -9,9 +9,11 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['serve', 'demo', 'evaluate', 'backup', 'worker'])
+    parser.add_argument('command', choices=['serve', 'demo', 'evaluate', 'backup', 'worker', 'doctor', 'ingest-directory'])
     parser.add_argument('--output')
     parser.add_argument('--once', action='store_true', help='Process at most one ready job')
+    parser.add_argument('--input', help='Evaluation JSONL or directory to ingest')
+    parser.add_argument('--min-score', type=float, default=0.8)
     args = parser.parse_args()
     if args.command == 'serve':
         import uvicorn
@@ -26,6 +28,25 @@ def main():
         cfg.validate()
         logging.basicConfig(level=logging.INFO, format='%(message)s')
         run_worker(cfg, once=args.once)
+    elif args.command == 'doctor':
+        from kb.operations import doctor
+        report = doctor()
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if not report['passed']:
+            raise SystemExit(1)
+    elif args.command == 'evaluate':
+        from kb.operations import evaluate
+        if not args.input or not args.output:
+            parser.error('evaluate requires --input JSONL and --output report.json')
+        report = evaluate(Path(args.input), Path(args.output), args.min_score)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if not report['passed']:
+            raise SystemExit(1)
+    elif args.command == 'ingest-directory':
+        from kb.operations import ingest_directory
+        if not args.input:
+            parser.error('ingest-directory requires --input directory')
+        print(json.dumps(ingest_directory(Path(args.input)), ensure_ascii=False, indent=2))
     elif args.command == 'backup':
         if not args.output:
             parser.error('backup requires --output')
@@ -42,8 +63,6 @@ def main():
         from demo import exercise
         report = exercise()
         print(json.dumps(report, ensure_ascii=False, indent=2))
-        if args.command == 'evaluate' and not report['passed']:
-            raise SystemExit(1)
 
 if __name__ == '__main__':
     main()

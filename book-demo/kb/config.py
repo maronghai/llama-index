@@ -20,6 +20,9 @@ class Config:
     api_key: str = ''
     embedding_model: str = ''
     chat_model: str = ''
+    embedding_base: str = ''
+    embedding_key: str = ''
+    batch_size: int = 16
     dimension: int = 256
     rate_limit: int = 120
     max_chunks: int = 5000
@@ -31,11 +34,14 @@ class Config:
     @classmethod
     def from_env(cls):
         return cls(keys=json.loads(os.getenv('KB_KEYS_JSON', '{}')),
-                   mode=os.getenv('KB_MODE', 'offline'),
+                   mode=os.getenv('KB_MODE', 'remote'),
                    api_base=os.getenv('KB_MODEL_BASE', ''),
                    api_key=os.getenv('KB_MODEL_KEY', ''),
                    embedding_model=os.getenv('KB_EMBEDDING_MODEL', ''),
                    chat_model=os.getenv('KB_CHAT_MODEL', ''),
+                   embedding_base=os.getenv('KB_EMBEDDING_BASE', ''),
+                   embedding_key=os.getenv('KB_EMBEDDING_KEY', ''),
+                   batch_size=int(os.getenv('KB_EMBEDDING_BATCH_SIZE', '16')),
                    dimension=int(os.getenv('KB_EMBEDDING_DIM', '256')),
                    rate_limit=int(os.getenv('KB_RATE_LIMIT', '120')),
                    max_chunks=int(os.getenv('KB_MAX_CHUNKS', '5000')),
@@ -61,14 +67,19 @@ class Config:
         import math
         if not math.isfinite(self.timeout) or self.timeout <= 0 or self.max_chunks < 1 or self.max_pending_jobs < 1 or self.job_max_attempts < 1 or self.job_lease_seconds < 1:
             raise ValueError('Invalid capacity, timeout or job limits')
+        if not 1 <= self.batch_size <= 128:
+            raise ValueError('Embedding batch size must be between 1 and 128')
         if self.mode == 'remote':
-            if not self.api_base.startswith('https://'):
-                raise ValueError('Remote model endpoint must use HTTPS')
+            from urllib.parse import urlsplit
+            for endpoint in (self.api_base, self.embedding_base or self.api_base):
+                url = urlsplit(endpoint)
+                if url.scheme != 'https' or not url.hostname or url.username or url.password or url.query or url.fragment:
+                    raise ValueError('Remote model endpoint must be an HTTPS URL without credentials/query/fragment')
             if not all((self.api_key, self.embedding_model, self.chat_model)):
                 raise ValueError('Remote model configuration is incomplete')
 
     @property
     def contract(self):
-        payload = [self.mode, self.api_base, self.embedding_model,
+        payload = [self.mode, self.embedding_base or self.api_base, self.embedding_model,
                    self.dimension, 'unicode-window-600-overlap-80-v1', 'hash-token-v1']
         return hashlib.sha256(json.dumps(payload).encode()).hexdigest()

@@ -4,7 +4,7 @@ import logging
 import signal
 import time
 from .config import Principal
-from .models import Embeddings, ModelFailure
+from .models import Embeddings, ModelFailure, embed_parts
 from .retrieval import chunk
 from .store import Conflict, Capacity
 
@@ -20,7 +20,7 @@ def _execute_step(config, store, embeddings, job):
         return
     parts = chunk(data['text'])
     try:
-        vectors = [(part, embeddings.get_text_embedding(part)) for part in parts]
+        vectors = embed_parts(embeddings, parts)
     except ModelFailure as e:
         store.fail_job(job, True, 'model_failure')
         return
